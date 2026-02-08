@@ -8,9 +8,10 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AppModule = void 0;
 const common_1 = require("@nestjs/common");
-const database_1 = require("../../../libs/database/src");
+const nestjs_rabbitmq_1 = require("@golevelup/nestjs-rabbitmq");
+const rabbitmq_options_1 = require("./rabbitmq.options");
+const notification_module_1 = require("./notification/notification.module");
 const common_2 = require("../../../libs/common/src");
-const notifications_module_1 = require("./notifications.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -18,11 +19,8 @@ exports.AppModule = AppModule = __decorate([
     (0, common_1.Module)({
         imports: [
             common_2.CommonModule,
-            database_1.MongoModule.forRoot({
-                uri: process.env.MONGO_URI ?? 'mongodb://localhost:27017',
-                dbName: process.env.NOTIFICATION_DB_NAME ?? 'notification_db',
-            }),
-            notifications_module_1.NotificationsModule,
+            nestjs_rabbitmq_1.RabbitMQModule.forRoot((0, rabbitmq_options_1.getRabbitMQOptions)()),
+            notification_module_1.NotificationModule,
         ],
     })
 ], AppModule);

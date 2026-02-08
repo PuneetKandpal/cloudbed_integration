@@ -1,8 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ClientsModule, Transport } from '@nestjs/microservices';
-import { BookingPolicyService } from './services/payment-policy.service';
-import { BookingStoredConsumer } from './consumers/booking-stored.consumer';
-import { PaymentPolicyPublisher } from './publishers/payment-policy.publisher';
+import { BookingPolicyService } from '../payment-policy.service';
+import { BookingStoredConsumer } from '../booking-stored.consumer';
+import { PaymentPolicyPublisher } from '../booking-policy.publisher';
 
 @Module({
   imports: [

@@ -9,11 +9,12 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.BookingModule = void 0;
 const common_1 = require("@nestjs/common");
 const mongoose_1 = require("@nestjs/mongoose");
-const booking_schema_1 = require("./schemas/booking.schema");
-const booking_service_1 = require("./services/booking.service");
-const booking_controller_1 = require("./controllers/booking.controller");
-const booking_consumer_1 = require("./consumers/booking.consumer");
-const booking_publisher_1 = require("./publishers/booking.publisher");
+const booking_schema_1 = require("../booking.schema");
+const booking_service_1 = require("../booking.service");
+const booking_controller_1 = require("../booking.controller");
+const booking_consumer_1 = require("../booking.consumer");
+const booking_publisher_1 = require("../booking.publisher");
+const logger_service_1 = require("../logger.service");
 let BookingModule = class BookingModule {
 };
 exports.BookingModule = BookingModule;
@@ -23,7 +24,11 @@ exports.BookingModule = BookingModule = __decorate([
             mongoose_1.MongooseModule.forFeature([{ name: 'Booking', schema: booking_schema_1.BookingSchema }]),
         ],
         controllers: [booking_controller_1.BookingController, booking_consumer_1.BookingConsumer],
-        providers: [booking_service_1.BookingService, booking_publisher_1.BookingPublisher],
+        providers: [
+            booking_service_1.BookingService,
+            booking_publisher_1.BookingPublisher,
+            logger_service_1.LoggerService,
+        ],
         exports: [booking_service_1.BookingService, booking_publisher_1.BookingPublisher],
     })
 ], BookingModule);

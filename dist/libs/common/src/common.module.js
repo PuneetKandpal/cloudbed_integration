@@ -8,15 +8,14 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CommonModule = void 0;
 const common_1 = require("@nestjs/common");
-const logger_module_js_1 = require("../../logger/src/logger.module.js");
 let CommonModule = class CommonModule {
 };
 exports.CommonModule = CommonModule;
 exports.CommonModule = CommonModule = __decorate([
     (0, common_1.Global)(),
     (0, common_1.Module)({
-        providers: [logger_module_js_1.AppLogger],
-        exports: [logger_module_js_1.AppLogger],
+        providers: [],
+        exports: [],
     })
 ], CommonModule);
 //# sourceMappingURL=common.module.js.map

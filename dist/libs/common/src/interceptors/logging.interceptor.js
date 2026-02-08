@@ -52,6 +52,6 @@ let LoggingInterceptor = LoggingInterceptor_1 = class LoggingInterceptor {
 exports.LoggingInterceptor = LoggingInterceptor;
 exports.LoggingInterceptor = LoggingInterceptor = LoggingInterceptor_1 = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [logger_service_1.AppLogger])
+    __metadata("design:paramtypes", [logger_service_1.LoggerService])
 ], LoggingInterceptor);
 //# sourceMappingURL=logging.interceptor.js.map

@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 
-import { AuditConsumer } from './consumers/audit.consumer';
-import { AuditService } from './services/audit.service';
-import { S3Service } from './services/s3.service';
-import { BookingAuditSchema } from './schemas/booking-audit.schema';
+import { AuditConsumer } from '../audit.consumer';
+import { AuditService } from '../audit.service';
+import { S3Service } from '../s3.service';
+import { BookingAuditSchema } from '../booking-audit.schema';
 
 @Module({
   imports: [

@@ -10,7 +10,6 @@ exports.AppModule = void 0;
 const common_1 = require("@nestjs/common");
 const database_1 = require("../../../libs/database/src");
 const common_2 = require("../../../libs/common/src");
-const logger_module_1 = require("../../../libs/logger/src/logger.module");
 const payment_module_1 = require("./payment/payment.module");
 let AppModule = class AppModule {
 };
@@ -18,7 +17,6 @@ exports.AppModule = AppModule;
 exports.AppModule = AppModule = __decorate([
     (0, common_1.Module)({
         imports: [
-            logger_module_1.LoggerModule,
             common_2.CommonModule,
             database_1.MongoModule.forRoot({
                 uri: process.env.MONGO_URI ?? 'mongodb://localhost:27017',

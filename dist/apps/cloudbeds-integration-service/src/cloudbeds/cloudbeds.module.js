@@ -9,11 +9,11 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.CloudbedsModule = void 0;
 const common_1 = require("@nestjs/common");
 const microservices_1 = require("@nestjs/microservices");
-const cloudbeds_webhook_controller_1 = require("./controllers/cloudbeds.webhook.controller");
-const cloudbeds_service_1 = require("./services/cloudbeds.service");
-const cloudbeds_parser_service_1 = require("./services/cloudbeds.parser.service");
-const cloudbeds_source_detector_service_1 = require("./services/cloudbeds.source-detector.service");
-const cloudbeds_publisher_1 = require("./publishers/cloudbeds.publisher");
+const cloudbeds_webhook_controller_1 = require("../cloudbeds.webhook.controller");
+const cloudbeds_service_1 = require("../cloudbeds.service");
+const cloudbeds_parser_service_1 = require("../cloudbeds.parser.service");
+const cloudbeds_source_detector_service_1 = require("../cloudbeds.source-detector.service");
+const cloudbeds_publisher_1 = require("../cloudbeds.publisher");
 let CloudbedsModule = class CloudbedsModule {
 };
 exports.CloudbedsModule = CloudbedsModule;

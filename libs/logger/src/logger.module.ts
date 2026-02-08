@@ -1,38 +1,27 @@
-import { Module, Global } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { WinstonModule } from 'nest-winston';
 import * as winston from 'winston';
-import * as DailyRotateFile from 'winston-daily-rotate-file';
+import 'winston-daily-rotate-file';
 
-import { AppLogger } from './logger.service';
+import { LoggerService } from './logger.service';
 
-@Global() // 🔥 makes logger available everywhere
 @Module({
   imports: [
     WinstonModule.forRoot({
       transports: [
-        // Console (dev)
         new winston.transports.Console({
           format: winston.format.combine(
             winston.format.timestamp(),
             winston.format.colorize(),
             winston.format.printf(
-              ({ timestamp, level, message, context, requestId, serviceName, metadata }) => {
-                let msg = `${timestamp} [${level}]`;
-                if (serviceName) msg += ` [${serviceName}]`;
-                if (context) msg += ` [${context}]`;
-                if (requestId) msg += ` [${requestId}]`;
-                msg += ` ${message}`;
-                if (metadata && Object.keys(metadata).length > 0) {
-                  msg += ` ${JSON.stringify(metadata)}`;
-                }
-                return msg;
+              ({ timestamp, level, message, context }) => {
+                return `${timestamp} [${level}] [${context}] ${message}`;
               },
             ),
           ),
         }),
 
-        // Application logs
-        new DailyRotateFile({
+        new winston.transports.DailyRotateFile({
           filename: 'logs/application-%DATE%.log',
           datePattern: 'YYYY-MM-DD',
           maxSize: '30m',
@@ -40,8 +29,7 @@ import { AppLogger } from './logger.service';
           format: winston.format.json(),
         }),
 
-        // Error logs
-        new DailyRotateFile({
+        new winston.transports.DailyRotateFile({
           filename: 'logs/error-%DATE%.log',
           datePattern: 'YYYY-MM-DD',
           level: 'error',
@@ -52,10 +40,7 @@ import { AppLogger } from './logger.service';
       ],
     }),
   ],
-  providers: [AppLogger],
-  exports: [AppLogger],
+  providers: [LoggerService],   // ✅ use LoggerService
+  exports: [LoggerService],     // ✅ export LoggerService
 })
 export class LoggerModule {}
-
-export { AppLogger };
-

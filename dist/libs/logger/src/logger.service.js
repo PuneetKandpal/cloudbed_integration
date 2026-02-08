@@ -12,11 +12,11 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.AppLogger = void 0;
+exports.LoggerService = void 0;
 const common_1 = require("@nestjs/common");
 const winston_1 = require("winston");
 const nest_winston_1 = require("nest-winston");
-let AppLogger = class AppLogger {
+let LoggerService = class LoggerService {
     constructor(logger) {
         this.logger = logger;
     }
@@ -39,25 +39,25 @@ let AppLogger = class AppLogger {
         }
     }
     error(message, trace) {
-        this.logger.error(typeof message === 'string' ? message : message.message, {
+        this.logger.error(typeof message === 'string' ? message : message?.message, {
             context: this.context,
             trace,
         });
     }
     warn(message) {
-        this.logger.warn(typeof message === 'string' ? message : message.message, { context: this.context });
+        this.logger.warn(typeof message === 'string' ? message : message?.message, { context: this.context });
     }
     debug(message) {
-        this.logger.debug(typeof message === 'string' ? message : message.message, { context: this.context });
+        this.logger.debug(typeof message === 'string' ? message : message?.message, { context: this.context });
     }
     verbose(message) {
-        this.logger.verbose(typeof message === 'string' ? message : message.message, { context: this.context });
+        this.logger.verbose(typeof message === 'string' ? message : message?.message, { context: this.context });
     }
 };
-exports.AppLogger = AppLogger;
-exports.AppLogger = AppLogger = __decorate([
+exports.LoggerService = LoggerService;
+exports.LoggerService = LoggerService = __decorate([
     (0, common_1.Injectable)(),
     __param(0, (0, common_1.Inject)(nest_winston_1.WINSTON_MODULE_PROVIDER)),
     __metadata("design:paramtypes", [winston_1.Logger])
-], AppLogger);
+], LoggerService);
 //# sourceMappingURL=logger.service.js.map

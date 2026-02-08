@@ -9,9 +9,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.BookingPolicyModule = void 0;
 const common_1 = require("@nestjs/common");
 const microservices_1 = require("@nestjs/microservices");
-const payment_policy_service_1 = require("./services/payment-policy.service");
-const booking_stored_consumer_1 = require("./consumers/booking-stored.consumer");
-const payment_policy_publisher_1 = require("./publishers/payment-policy.publisher");
+const payment_policy_service_1 = require("../payment-policy.service");
+const booking_stored_consumer_1 = require("../booking-stored.consumer");
+const booking_policy_publisher_1 = require("../booking-policy.publisher");
 let BookingPolicyModule = class BookingPolicyModule {
 };
 exports.BookingPolicyModule = BookingPolicyModule;
@@ -32,7 +32,7 @@ exports.BookingPolicyModule = BookingPolicyModule = __decorate([
         providers: [
             payment_policy_service_1.BookingPolicyService,
             booking_stored_consumer_1.BookingStoredConsumer,
-            payment_policy_publisher_1.PaymentPolicyPublisher,
+            booking_policy_publisher_1.PaymentPolicyPublisher,
         ],
     })
 ], BookingPolicyModule);

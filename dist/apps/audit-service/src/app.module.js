@@ -10,14 +10,12 @@ exports.AppModule = void 0;
 const common_1 = require("@nestjs/common");
 const mongoose_1 = require("@nestjs/mongoose");
 const audit_module_1 = require("./audit/audit.module");
-const logger_module_1 = require("../../../libs/logger/src/logger.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
 exports.AppModule = AppModule = __decorate([
     (0, common_1.Module)({
         imports: [
-            logger_module_1.LoggerModule,
             mongoose_1.MongooseModule.forRoot(process.env.MONGO_URI ||
                 'mongodb://127.0.0.1:27017/hostelworld_audit'),
             audit_module_1.AuditModule,

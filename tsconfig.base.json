@@ -24,7 +24,9 @@
       "@hostelworld/logger/*": ["libs/logger/src/*"],
     
       "@hostelworld/database": ["libs/database/src"],
-      "@hostelworld/database/*": ["libs/database/src/*"]
+      "@hostelworld/database/*": ["libs/database/src/*"],
+
+      "@hostelworld/shared-events": ["libs/shared-events/src"],
     }    
   },
   "exclude": ["node_modules", "dist"]

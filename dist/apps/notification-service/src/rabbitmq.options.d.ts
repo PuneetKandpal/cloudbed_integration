@@ -1,2 +1,2 @@
-import { RmqOptions } from '@nestjs/microservices';
-export declare function getRabbitMQOptions(queuePrefix: string): RmqOptions;
+import { RabbitMQConfig } from '@golevelup/nestjs-rabbitmq';
+export declare const getRabbitMQOptions: () => RabbitMQConfig;

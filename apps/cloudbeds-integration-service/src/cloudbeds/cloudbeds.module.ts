@@ -1,11 +1,11 @@
 import { Module } from '@nestjs/common';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 
-import { CloudbedsWebhookController } from './controllers/cloudbeds.webhook.controller';
-import { CloudbedsService } from './services/cloudbeds.service';
-import { CloudbedsParserService } from './services/cloudbeds.parser.service';
-import { CloudbedsSourceDetectorService } from './services/cloudbeds.source-detector.service';
-import { CloudbedsPublisher } from './publishers/cloudbeds.publisher';
+import { CloudbedsWebhookController } from '../cloudbeds.webhook.controller';
+import { CloudbedsService } from '../cloudbeds.service';
+import { CloudbedsParserService } from '../cloudbeds.parser.service';
+import { CloudbedsSourceDetectorService } from '../cloudbeds.source-detector.service';
+import { CloudbedsPublisher } from '../cloudbeds.publisher';
 
 @Module({
   imports: [

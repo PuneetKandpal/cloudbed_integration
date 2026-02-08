@@ -9,10 +9,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AuditModule = void 0;
 const common_1 = require("@nestjs/common");
 const mongoose_1 = require("@nestjs/mongoose");
-const audit_consumer_1 = require("./consumers/audit.consumer");
-const audit_service_1 = require("./services/audit.service");
-const s3_service_1 = require("./services/s3.service");
-const booking_audit_schema_1 = require("./schemas/booking-audit.schema");
+const audit_consumer_1 = require("../audit.consumer");
+const audit_service_1 = require("../audit.service");
+const s3_service_1 = require("../s3.service");
+const booking_audit_schema_1 = require("../booking-audit.schema");
 let AuditModule = class AuditModule {
 };
 exports.AuditModule = AuditModule;

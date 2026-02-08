@@ -7,7 +7,7 @@ import { Logger } from 'winston';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 
 @Injectable()
-export class AppLogger implements NestLoggerService {
+export class LoggerService implements NestLoggerService {
   private context?: string;
 
   constructor(
@@ -15,13 +15,11 @@ export class AppLogger implements NestLoggerService {
     private readonly logger: Logger,
   ) {}
 
-  // ✅ backward compatibility
   setContext(context: string) {
     this.context = context;
   }
 
-  // ✅ support BOTH styles
-  log(message: string | any, correlationId?: string) {
+  log(message: any, correlationId?: string) {
     if (typeof message === 'string') {
       this.logger.info(message, {
         context: this.context,
@@ -36,9 +34,9 @@ export class AppLogger implements NestLoggerService {
     }
   }
 
-  error(message: string | any, trace?: string) {
+  error(message: any, trace?: string) {
     this.logger.error(
-      typeof message === 'string' ? message : message.message,
+      typeof message === 'string' ? message : message?.message,
       {
         context: this.context,
         trace,
@@ -46,23 +44,23 @@ export class AppLogger implements NestLoggerService {
     );
   }
 
-  warn(message: string | any) {
+  warn(message: any) {
     this.logger.warn(
-      typeof message === 'string' ? message : message.message,
+      typeof message === 'string' ? message : message?.message,
       { context: this.context },
     );
   }
 
-  debug(message: string | any) {
+  debug(message: any) {
     this.logger.debug(
-      typeof message === 'string' ? message : message.message,
+      typeof message === 'string' ? message : message?.message,
       { context: this.context },
     );
   }
 
-  verbose(message: string | any) {
+  verbose(message: any) {
     this.logger.verbose(
-      typeof message === 'string' ? message : message.message,
+      typeof message === 'string' ? message : message?.message,
       { context: this.context },
     );
   }

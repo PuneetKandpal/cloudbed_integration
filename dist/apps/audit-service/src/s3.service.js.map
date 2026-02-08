@@ -1,0 +1,1 @@
+{"version":3,"file":"s3.service.js","sourceRoot":"","sources":["../../../../apps/audit-service/src/s3.service.ts"],"names":[],"mappings":";;;;;;;;;AAAA,2CAA4C;AAGrC,IAAM,SAAS,GAAf,MAAM,SAAS;IACpB,KAAK,CAAC,MAAM,CAAC,IAAY,EAAE,KAAU;QAEnC,OAAO;IACT,CAAC;CACF,CAAA;AALY,8BAAS;oBAAT,SAAS;IADrB,IAAA,mBAAU,GAAE;GACA,SAAS,CAKrB"}

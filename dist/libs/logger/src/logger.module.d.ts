@@ -1,4 +1,3 @@
-import { AppLogger } from './logger.service';
+import 'winston-daily-rotate-file';
 export declare class LoggerModule {
 }
-export { AppLogger };
