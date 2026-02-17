@@ -1,0 +1,321 @@
+// Prisma Schema for Hostelworld Payment Automation System
+// This schema manages bookings, guests, payments, risk assessments, and audit logs
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Booking policy types
+enum BookingPolicyType {
+  FLEXIBLE
+  NON_REFUNDABLE
+  UNKNOWN
+}
+
+// Booking status types
+enum BookingStatus {
+  CREATED
+  CONFIRMED
+  CHECKED_IN
+  CHECKED_OUT
+  CANCELLED
+  NO_SHOW
+}
+
+// Payment status types
+enum PaymentStatus {
+  PENDING
+  AUTHORIZED
+  CAPTURED
+  FAILED
+  REFUNDED
+}
+
+// Risk level types
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// Email types
+enum EmailType {
+  PAYMENT_REMINDER
+  PAYMENT_LINK
+  CANCELLATION_WARNING
+  CANCELLATION_CONFIRMATION
+  MANAGER_APPROVAL_REQUEST
+  SUPPORT_NOTIFICATION
+}
+
+// Email status
+enum EmailStatus {
+  PENDING
+  SENT
+  FAILED
+  BOUNCED
+}
+
+// Core booking entity - stores all reservation data from Cloudbed
+model Booking {
+  id                    String              @id @default(uuid())
+  reservationId         String              @unique
+  propertyId            String
+  propertyName          String?
+  propertyAddress       String?
+  
+  // Dates
+  startDate             DateTime
+  endDate               DateTime
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  cancellationDeadline  DateTime?
+  
+  // Guest information
+  guestId               String?
+  guest                 Guest?              @relation(fields: [guestId], references: [id])
+  numberOfGuests        Int                 @default(1)
+  
+  // Policy and Status
+  policyType            BookingPolicyType   @default(UNKNOWN)
+  status                BookingStatus       @default(CREATED)
+  
+  // Financial data
+  totalAmount           Decimal             @default(0)
+  paidAmount            Decimal             @default(0)
+  remainingBalance      Decimal             @default(0)
+  currency              String              @default("USD")
+  
+  // Room assignment
+  roomId                String?
+  roomName              String?
+  
+  // Sub-reservation data
+  subReservations       Json?
+  
+  // Raw webhook payload for audit/debugging
+  rawPayload            Json
+  
+  // Relationships
+  payments              Payment[]
+  riskAssessments       RiskAssessment[]
+  emails                Email[]
+  auditLogs             AuditLog[]
+  
+  // Workflow tracking
+  isSameDayCheckIn      Boolean             @default(false)
+  requiresManagerApproval Boolean           @default(false)
+  managerApprovedAt     DateTime?
+  cancelledAt           DateTime?
+  cancellationReason    String?
+  
+  @@index([reservationId])
+  @@index([propertyId])
+  @@index([status])
+  @@index([startDate])
+  @@index([createdAt])
+  @@index([policyType])
+}
+
+// Guest entity - stores customer information
+model Guest {
+  id                String              @id @default(uuid())
+  cloudbedGuestId   String              @unique
+  propertyId        String
+  
+  // Personal details
+  firstName         String?
+  lastName          String?
+  email             String?
+  phone             String?
+  
+  // Address
+  country           String?
+  city              String?
+  address           String?
+  postalCode        String?
+  
+  // Metadata
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  rawPayload        Json?
+  
+  // Relationships
+  bookings          Booking[]
+  
+  @@index([cloudbedGuestId])
+  @@index([email])
+  @@index([propertyId])
+}
+
+// Payment entity - tracks all payment attempts and transactions
+model Payment {
+  id                String              @id @default(uuid())
+  bookingId         String
+  booking           Booking             @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  
+  // Payment details
+  amount            Decimal
+  currency          String              @default("USD")
+  status            PaymentStatus       @default(PENDING)
+  
+  // Payment method
+  cardLast4         String?
+  cardType          String?
+  
+  // Transaction tracking
+  transactionId     String?
+  authorizationCode String?
+  
+  // Retry logic
+  attemptNumber     Int                 @default(1)
+  maxAttempts       Int                 @default(3)
+  nextRetryAt       DateTime?
+  
+  // Response data
+  gatewayResponse   Json?
+  errorMessage      String?
+  
+  // Timestamps
+  createdAt         DateTime            @default(now())
+  processedAt       DateTime?
+  
+  @@index([bookingId])
+  @@index([status])
+  @@index([nextRetryAt])
+}
+
+// Risk assessment entity - evaluates booking risk factors
+model RiskAssessment {
+  id                    String              @id @default(uuid())
+  bookingId             String
+  booking               Booking             @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  
+  // Risk scoring
+  riskLevel             RiskLevel           @default(LOW)
+  riskScore             Int                 @default(0)
+  
+  // Risk factors
+  isSameDayCheckIn      Boolean             @default(false)
+  isNextDayCheckIn      Boolean             @default(false)
+  hoursUntilCheckIn     Int?
+  hasMultipleGuests     Boolean             @default(false)
+  hasPaymentHistory     Boolean             @default(false)
+  hasFailedPayments     Boolean             @default(false)
+  
+  // Occupancy context
+  propertyOccupancy     Decimal?
+  occupancyThreshold    Decimal             @default(50)
+  
+  // Decision tracking
+  requiresImmediatePayment Boolean          @default(false)
+  priorityForCancellation  Boolean          @default(false)
+  
+  // Metadata
+  assessedAt            DateTime            @default(now())
+  assessmentData        Json?
+  
+  @@index([bookingId])
+  @@index([riskLevel])
+  @@index([assessedAt])
+}
+
+// Email entity - tracks all email communications
+model Email {
+  id                String              @id @default(uuid())
+  bookingId         String?
+  booking           Booking?            @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  
+  // Email details
+  emailType         EmailType
+  recipient         String
+  subject           String
+  body              String              @db.Text
+  
+  // Status tracking
+  status            EmailStatus         @default(PENDING)
+  sentAt            DateTime?
+  failedAt          DateTime?
+  errorMessage      String?
+  
+  // Retry logic
+  attemptNumber     Int                 @default(1)
+  maxAttempts       Int                 @default(3)
+  nextRetryAt       DateTime?
+  
+  // Metadata
+  createdAt         DateTime            @default(now())
+  
+  @@index([bookingId])
+  @@index([status])
+  @@index([emailType])
+  @@index([nextRetryAt])
+}
+
+// Audit log entity - comprehensive event tracking
+model AuditLog {
+  id                String              @id @default(uuid())
+  
+  // Request tracking
+  requestId         String              @default(uuid())
+  
+  // Context
+  bookingId         String?
+  booking           Booking?            @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  
+  // Event details
+  module            String
+  function          String
+  message           String              @db.Text
+  level             String              @default("info")
+  
+  // Data
+  inputData         Json?
+  outputData        Json?
+  errorData         Json?
+  
+  // Metadata
+  timestamp         DateTime            @default(now())
+  duration          Int?
+  userId            String?
+  ipAddress         String?
+  
+  @@index([requestId])
+  @@index([bookingId])
+  @@index([module])
+  @@index([timestamp])
+  @@index([level])
+}
+
+// Scheduler task tracking
+model ScheduledTask {
+  id                String              @id @default(uuid())
+  
+  // Task details
+  taskType          String
+  taskData          Json
+  
+  // Scheduling
+  scheduledFor      DateTime
+  executedAt        DateTime?
+  completedAt       DateTime?
+  
+  // Status
+  status            String              @default("PENDING")
+  errorMessage      String?
+  retryCount        Int                 @default(0)
+  maxRetries        Int                 @default(3)
+  
+  // Metadata
+  createdAt         DateTime            @default(now())
+  
+  @@index([taskType])
+  @@index([scheduledFor])
+  @@index([status])
+}

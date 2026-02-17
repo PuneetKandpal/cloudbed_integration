@@ -1,10 +1,28 @@
 import { Module } from '@nestjs/common';
-import { AppController } from './app.controller';
-import { AppService } from './app.service';
+import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
+import { PrismaModule } from './prisma/prisma.module';
+import { WebhookModule } from './webhook/webhook.module';
+import { BookingModule } from './booking/booking.module';
+import { CloudbedModule } from './cloudbed/cloudbed.module';
+import { PaymentModule } from './payment/payment.module';
+import { RiskModule } from './risk/risk.module';
+import { EmailModule } from './email/email.module';
 
 @Module({
-  imports: [],
-  controllers: [AppController],
-  providers: [AppService],
+  imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: '.env',
+    }),
+    ScheduleModule.forRoot(),
+    PrismaModule,
+    WebhookModule,
+    BookingModule,
+    CloudbedModule,
+    PaymentModule,
+    RiskModule,
+    EmailModule,
+  ],
 })
 export class AppModule {}
