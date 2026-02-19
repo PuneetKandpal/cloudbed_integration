@@ -39,7 +39,9 @@ export class PaymentService {
         throw new Error('Booking not found');
       }
 
-      if (booking.remainingBalance <= 0) {
+      const remainingBalance = booking.remainingBalance.toNumber();
+
+      if (remainingBalance <= 0) {
         this.logger.logInfo(
           'No outstanding balance, skipping payment',
           'PaymentService',
@@ -62,7 +64,7 @@ export class PaymentService {
 
       const paymentResult = await this.authorizeAndCharge(
         payment.id,
-        booking.remainingBalance,
+        remainingBalance,
         requestId,
       );
 
@@ -92,7 +94,11 @@ export class PaymentService {
           { bookingId, transactionId: paymentResult.transactionId },
         );
       } else {
-        await this.handlePaymentFailure(payment.id, paymentResult.error, requestId);
+        await this.handlePaymentFailure(
+          payment.id,
+          paymentResult.error ?? 'Payment failed',
+          requestId,
+        );
       }
     } catch (error) {
       this.logger.logError(

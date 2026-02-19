@@ -40,15 +40,21 @@ export class RiskAssessmentService {
         throw new Error('Booking not found');
       }
 
+      const totalAmount = booking.totalAmount.toNumber();
+      const remainingBalance = booking.remainingBalance.toNumber();
+
       const now = new Date();
       const hoursUntilCheckIn = differenceInHours(booking.startDate, now);
 
       const isSameDayCheckIn = hoursUntilCheckIn <= 24;
-      const isNextDayCheckIn = hoursUntilCheckIn > 24 && hoursUntilCheckIn <= 48;
-      const hasMultipleGuests = booking.numberOfGuests > parseInt(this.config.get('HIGH_RISK_GUEST_THRESHOLD') || '4');
+      const isNextDayCheckIn =
+        hoursUntilCheckIn > 24 && hoursUntilCheckIn <= 48;
+      const hasMultipleGuests =
+        booking.numberOfGuests >
+        parseInt(this.config.get('HIGH_RISK_GUEST_THRESHOLD') || '4');
 
       let riskScore = 0;
-      let riskLevel = RiskLevel.LOW;
+      let riskLevel: RiskLevel = RiskLevel.LOW;
 
       if (isSameDayCheckIn) {
         riskScore += 50;
@@ -60,7 +66,7 @@ export class RiskAssessmentService {
         riskScore += 20;
       }
 
-      if (booking.totalAmount > 500) {
+      if (totalAmount > 500) {
         riskScore += 10;
       }
 
@@ -72,8 +78,11 @@ export class RiskAssessmentService {
         riskLevel = RiskLevel.MEDIUM;
       }
 
-      const requiresImmediatePayment = isSameDayCheckIn || riskLevel === RiskLevel.CRITICAL;
-      const priorityForCancellation = (riskLevel === RiskLevel.HIGH || riskLevel === RiskLevel.CRITICAL) && booking.remainingBalance > 0;
+      const requiresImmediatePayment =
+        isSameDayCheckIn || riskLevel === RiskLevel.CRITICAL;
+      const priorityForCancellation =
+        (riskLevel === RiskLevel.HIGH || riskLevel === RiskLevel.CRITICAL) &&
+        remainingBalance > 0;
 
       await this.prisma.riskAssessment.create({
         data: {
@@ -91,12 +100,12 @@ export class RiskAssessmentService {
               sameDayCheckIn: isSameDayCheckIn,
               nextDayCheckIn: isNextDayCheckIn,
               multipleGuests: hasMultipleGuests,
-              highValue: booking.totalAmount > 500,
+              highValue: totalAmount > 500,
             },
             scores: {
               timingScore: isSameDayCheckIn ? 50 : isNextDayCheckIn ? 30 : 0,
               guestScore: hasMultipleGuests ? 20 : 0,
-              valueScore: booking.totalAmount > 500 ? 10 : 0,
+              valueScore: totalAmount > 500 ? 10 : 0,
               totalScore: riskScore,
             },
           },

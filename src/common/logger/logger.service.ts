@@ -1,12 +1,12 @@
 import { Injectable, LoggerService as NestLoggerService } from '@nestjs/common';
 import * as winston from 'winston';
-import * as DailyRotateFile from 'winston-daily-rotate-file';
+import DailyRotateFile from 'winston-daily-rotate-file';
 import { v4 as uuidv4 } from 'uuid';
 
 /**
  * Custom Winston Logger Service
  * Provides comprehensive logging with request tracking, automatic rotation, and 15-day retention
- * 
+ *
  * Features:
  * - Request ID tracking for correlation
  * - Module/Function context tracking
@@ -39,11 +39,15 @@ export class LoggerService implements NestLoggerService {
     const consoleFormat = winston.format.combine(
       winston.format.colorize(),
       winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
-      winston.format.printf(({ timestamp, level, message, context, requestId, ...meta }) => {
-        const metaStr = Object.keys(meta).length ? JSON.stringify(meta, null, 2) : '';
-        const reqId = requestId ? `[${requestId}]` : '';
-        return `${timestamp} ${level} [${context || this.context}] ${reqId}: ${message} ${metaStr}`;
-      }),
+      winston.format.printf(
+        ({ timestamp, level, message, context, requestId, ...meta }) => {
+          const metaStr = Object.keys(meta).length
+            ? JSON.stringify(meta, null, 2)
+            : '';
+          const reqId = requestId ? `[${requestId}]` : '';
+          return `${timestamp} ${level} [${context || this.context}] ${reqId}: ${message} ${metaStr}`;
+        },
+      ),
     );
 
     // Daily rotate file transport for all logs
@@ -129,12 +133,21 @@ export class LoggerService implements NestLoggerService {
   private sanitizeData(data: any): any {
     if (!data) return data;
 
-    const sensitiveFields = ['password', 'apiKey', 'token', 'secret', 'cardNumber', 'cvv'];
+    const sensitiveFields = [
+      'password',
+      'apiKey',
+      'token',
+      'secret',
+      'cardNumber',
+      'cvv',
+    ];
     const sanitized = JSON.parse(JSON.stringify(data));
 
     const sanitizeObject = (obj: any) => {
       for (const key in obj) {
-        if (sensitiveFields.some(field => key.toLowerCase().includes(field))) {
+        if (
+          sensitiveFields.some((field) => key.toLowerCase().includes(field))
+        ) {
           obj[key] = '***REDACTED***';
         } else if (typeof obj[key] === 'object' && obj[key] !== null) {
           sanitizeObject(obj[key]);
@@ -194,7 +207,15 @@ export class LoggerService implements NestLoggerService {
     inputData?: any,
     outputData?: any,
   ): void {
-    this.logWithContext('info', message, module, functionName, requestId, inputData, outputData);
+    this.logWithContext(
+      'info',
+      message,
+      module,
+      functionName,
+      requestId,
+      inputData,
+      outputData,
+    );
   }
 
   logError(
@@ -205,7 +226,16 @@ export class LoggerService implements NestLoggerService {
     requestId?: string,
     inputData?: any,
   ): void {
-    this.logWithContext('error', message, module, functionName, requestId, inputData, undefined, error);
+    this.logWithContext(
+      'error',
+      message,
+      module,
+      functionName,
+      requestId,
+      inputData,
+      undefined,
+      error,
+    );
   }
 
   logDebug(
@@ -215,7 +245,14 @@ export class LoggerService implements NestLoggerService {
     requestId?: string,
     data?: any,
   ): void {
-    this.logWithContext('debug', message, module, functionName, requestId, data);
+    this.logWithContext(
+      'debug',
+      message,
+      module,
+      functionName,
+      requestId,
+      data,
+    );
   }
 
   logWarn(

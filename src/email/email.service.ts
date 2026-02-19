@@ -121,7 +121,8 @@ export class EmailService {
     bookingDetails: any,
     requestId: string,
   ): Promise<void> {
-    const managerEmail = this.config.get('MANAGER_EMAIL') || 'manager@hotel.com';
+    const managerEmail =
+      this.config.get('MANAGER_EMAIL') || 'manager@hotel.com';
     const subject = 'Manager Approval Required - Payment Failed';
     const body = `
       <h2>Manager Approval Required</h2>

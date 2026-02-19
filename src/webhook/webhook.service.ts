@@ -21,7 +21,11 @@ export class WebhookService {
    * Main webhook processing logic
    * Routes events based on event type
    */
-  async processWebhook(payload: any, headers: any, requestId: string): Promise<void> {
+  async processWebhook(
+    payload: any,
+    headers: any,
+    requestId: string,
+  ): Promise<void> {
     this.logger.logInfo(
       'Processing webhook event',
       'WebhookService',
@@ -76,7 +80,10 @@ export class WebhookService {
    * Handle reservation created event
    * This is the main trigger for the payment automation workflow
    */
-  private async handleReservationCreated(payload: any, requestId: string): Promise<void> {
+  private async handleReservationCreated(
+    payload: any,
+    requestId: string,
+  ): Promise<void> {
     this.logger.logInfo(
       'Handling reservation created event',
       'WebhookService',
@@ -112,7 +119,10 @@ export class WebhookService {
    * Handle reservation status changed event
    * Triggers payment on check-in
    */
-  private async handleReservationStatusChanged(payload: any, requestId: string): Promise<void> {
+  private async handleReservationStatusChanged(
+    payload: any,
+    requestId: string,
+  ): Promise<void> {
     this.logger.logInfo(
       'Handling reservation status changed event',
       'WebhookService',
@@ -155,7 +165,10 @@ export class WebhookService {
   /**
    * Handle accommodation status changed event
    */
-  private async handleAccommodationStatusChanged(payload: any, requestId: string): Promise<void> {
+  private async handleAccommodationStatusChanged(
+    payload: any,
+    requestId: string,
+  ): Promise<void> {
     this.logger.logInfo(
       'Handling accommodation status changed event',
       'WebhookService',
@@ -188,7 +201,10 @@ export class WebhookService {
   /**
    * Handle accommodation changed event
    */
-  private async handleAccommodationChanged(payload: any, requestId: string): Promise<void> {
+  private async handleAccommodationChanged(
+    payload: any,
+    requestId: string,
+  ): Promise<void> {
     this.logger.logInfo(
       'Handling accommodation changed event',
       'WebhookService',
@@ -221,7 +237,10 @@ export class WebhookService {
   /**
    * Handle guest created event
    */
-  private async handleGuestCreated(payload: any, requestId: string): Promise<void> {
+  private async handleGuestCreated(
+    payload: any,
+    requestId: string,
+  ): Promise<void> {
     this.logger.logInfo(
       'Handling guest created event',
       'WebhookService',
@@ -237,7 +256,10 @@ export class WebhookService {
   /**
    * Handle guest updated event
    */
-  private async handleGuestUpdated(payload: any, requestId: string): Promise<void> {
+  private async handleGuestUpdated(
+    payload: any,
+    requestId: string,
+  ): Promise<void> {
     this.logger.logInfo(
       'Handling guest updated event',
       'WebhookService',
@@ -252,7 +274,11 @@ export class WebhookService {
   /**
    * Create audit log entry for webhook event
    */
-  private async createAuditLog(payload: any, headers: any, requestId: string): Promise<void> {
+  private async createAuditLog(
+    payload: any,
+    headers: any,
+    requestId: string,
+  ): Promise<void> {
     try {
       await this.prisma.auditLog.create({
         data: {

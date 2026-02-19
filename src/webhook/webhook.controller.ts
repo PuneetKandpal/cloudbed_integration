@@ -1,4 +1,11 @@
-import { Controller, Post, Body, Headers, HttpCode, HttpStatus } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  Headers,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
 import { WebhookService } from './webhook.service';
 import { LoggerService } from '../common/logger/logger.service';
 
@@ -7,7 +14,7 @@ import { LoggerService } from '../common/logger/logger.service';
  * Handles incoming webhook events from Cloudbed
  * Processes reservation creation, status changes, guest updates, etc.
  */
-@Controller('webhook')
+@Controller('cloudbeds/webhook')
 export class WebhookController {
   private readonly logger = new LoggerService('WebhookController');
 
@@ -21,7 +28,7 @@ export class WebhookController {
   @HttpCode(HttpStatus.OK)
   async handleWebhook(@Body() payload: any, @Headers() headers: any) {
     const requestId = this.logger.generateRequestId();
-    
+
     this.logger.logInfo(
       'Received Cloudbed webhook event',
       'WebhookController',

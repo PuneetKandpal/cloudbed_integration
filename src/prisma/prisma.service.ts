@@ -8,7 +8,10 @@ import { LoggerService } from '../common/logger/logger.service';
  * Handles graceful connection/disconnection
  */
 @Injectable()
-export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+export class PrismaService
+  extends PrismaClient
+  implements OnModuleInit, OnModuleDestroy
+{
   private readonly logger = new LoggerService('PrismaService');
 
   constructor() {
@@ -66,7 +69,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     );
 
     await this.$disconnect();
-    
+
     this.logger.logInfo(
       'Successfully disconnected from database',
       'PrismaService',

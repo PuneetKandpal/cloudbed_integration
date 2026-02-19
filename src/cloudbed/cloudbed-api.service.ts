@@ -15,7 +15,8 @@ export class CloudbedApiService {
   private readonly apiKey: string;
 
   constructor(private readonly config: ConfigService) {
-    this.apiUrl = this.config.get('CLOUDBED_API_URL') || 'https://api.cloudbeds.com';
+    this.apiUrl =
+      this.config.get('CLOUDBED_API_URL') || 'https://api.cloudbeds.com';
     this.apiKey = this.config.get('CLOUDBED_API_KEY') || '';
 
     this.httpClient = axios.create({
@@ -41,19 +42,39 @@ export class CloudbedApiService {
     );
 
     try {
-      const response = await this.httpClient.get(`/api/v1.2/getReservation`, {
-        params: { reservationID: reservationId },
+      const response = await this.httpClient.get(`/api/v1.3/getReservation`, {
+        params: { reservationID: reservationId, includeRatePlans: true },
       });
+
+      const reservationData = response.data?.data ?? response.data;
+      const reservationKeys =
+        typeof reservationData === 'object' && reservationData !== null
+          ? Object.keys(reservationData as Record<string, unknown>)
+          : [];
+
+      const includeRatePlansCount = Array.isArray(
+        (reservationData)?.ratePlans,
+      )
+        ? ((reservationData).ratePlans as any[]).length
+        : undefined;
+
+      const fullReservationResponse = reservationData;
 
       this.logger.logInfo(
         'Successfully fetched reservation',
         'CloudbedApiService',
         'getReservation',
         requestId,
-        { reservationId },
+        {
+          reservationId,
+          status: response.status,
+          topLevelKeys: reservationKeys,
+          ratePlansCount: includeRatePlansCount,
+          fullResponse: fullReservationResponse,
+        },
       );
 
-      return response.data.data || response.data;
+      return reservationData;
     } catch (error) {
       this.logger.logError(
         'Failed to fetch reservation from Cloudbed',
@@ -64,6 +85,67 @@ export class CloudbedApiService {
         { reservationId },
       );
       return this.getMockReservationData(reservationId);
+    }
+  }
+
+  async getReservationsWithRateDetails(
+    reservationId: string,
+    requestId: string,
+  ): Promise<unknown> {
+    this.logger.logInfo(
+      'Fetching reservation rate details from Cloudbed',
+      'CloudbedApiService',
+      'getReservationsWithRateDetails',
+      requestId,
+      { reservationId },
+    );
+
+    try {
+      const response = await this.httpClient.get(
+        `/api/v1.3/getReservationsWithRateDetails`,
+        {
+          params: { reservationID: reservationId },
+        },
+      );
+
+      const first = Array.isArray(response.data?.data) ? response.data.data[0] : null;
+      const detailsData = first ?? response.data?.data ?? response.data ?? null;
+
+      const rooms = Array.isArray((detailsData)?.rooms)
+        ? ((detailsData).rooms as any[])
+        : [];
+
+      const rateNames = rooms
+        .map((r) => String(r?.rateName ?? ''))
+        .filter(Boolean);
+
+      const fullRateDetailsResponse = detailsData;
+
+      this.logger.logInfo(
+        'Successfully fetched reservation rate details from Cloudbed',
+        'CloudbedApiService',
+        'getReservationsWithRateDetails',
+        requestId,
+        {
+          reservationId,
+          status: response.status,
+          roomsCount: rooms.length,
+          rateNamesSample: rateNames.slice(0, 5),
+          fullResponse: fullRateDetailsResponse,
+        },
+      );
+
+      return detailsData;
+    } catch (error) {
+      this.logger.logError(
+        'Failed to fetch reservation rate details from Cloudbed',
+        'CloudbedApiService',
+        'getReservationsWithRateDetails',
+        error,
+        requestId,
+        { reservationId },
+      );
+      return null;
     }
   }
 
@@ -94,6 +176,59 @@ export class CloudbedApiService {
         requestId,
       );
       return null;
+    }
+  }
+
+  async getRatePlans(
+    params: {
+      startDate: string;
+      endDate: string;
+      adults?: number;
+      children?: number;
+      detailedRates?: boolean;
+    },
+    requestId: string,
+  ): Promise<any[]> {
+    this.logger.logInfo(
+      'Fetching rate plans from Cloudbed',
+      'CloudbedApiService',
+      'getRatePlans',
+      requestId,
+      params,
+    );
+
+    try {
+      const response = await this.httpClient.get(`/api/v1.3/getRatePlans`, {
+        params: {
+          ...params,
+          detailedRates: params.detailedRates ?? true,
+        },
+      });
+
+      this.logger.logInfo(
+        'Successfully fetched rate plans from Cloudbed',
+        'CloudbedApiService',
+        'getRatePlans',
+        requestId,
+        {
+          status: response.status,
+          count: Array.isArray(response.data?.data)
+            ? response.data.data.length
+            : 0,
+        },
+      );
+
+      return response.data?.data ?? response.data ?? [];
+    } catch (error) {
+      this.logger.logError(
+        'Failed to fetch rate plans from Cloudbed',
+        'CloudbedApiService',
+        'getRatePlans',
+        error,
+        requestId,
+        params,
+      );
+      return [];
     }
   }
 
