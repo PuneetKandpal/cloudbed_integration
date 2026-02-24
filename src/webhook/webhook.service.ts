@@ -26,19 +26,47 @@ export class WebhookService {
     headers: any,
     requestId: string,
   ): Promise<void> {
+    const eventType = payload?.event || 'unknown';
+    const reservationId =
+      payload?.reservationID ||
+      payload?.reservationId ||
+      payload?.subReservations?.[0]?.id;
+
     this.logger.logInfo(
       'Processing webhook event',
       'WebhookService',
       'processWebhook',
       requestId,
-      { event: payload?.event, payload },
+      { event: eventType, payload },
     );
 
-    // Store raw webhook in audit log
-    await this.createAuditLog(payload, headers, requestId);
+    // Store raw webhook in WebhookEvent table
+    let webhookEventId: string | undefined;
+    try {
+      const event = await this.prisma.webhookEvent.create({
+        data: {
+          eventType,
+          eventId: requestId, // using requestId as correlation id
+          reservationId: reservationId ? String(reservationId) : null,
+          propertyId: payload?.propertyID_str || payload?.propertyId_str,
+          payload: payload || {},
+          headers: headers || {},
+          source: 'CLOUDBED_WEBHOOK',
+        },
+      });
+      webhookEventId = event.id;
+    } catch (dbError) {
+      this.logger.logError(
+        'Failed to save webhook event to database',
+        'WebhookService',
+        'processWebhook',
+        dbError,
+        requestId,
+      );
+    }
 
-    // Route based on event type
-    const eventType = payload?.event;
+    // Also store raw webhook in audit log for backward compatibility
+    await this.createAuditLog(payload, headers, requestId);
 
     switch (eventType) {
       case 'reservation/created':
@@ -73,6 +101,28 @@ export class WebhookService {
           requestId,
           { eventType, payload },
         );
+    }
+
+    // Mark webhook event as processed
+    if (webhookEventId) {
+      try {
+        await this.prisma.webhookEvent.update({
+          where: { id: webhookEventId },
+          data: {
+            processed: true,
+            processedAt: new Date(),
+          },
+        });
+      } catch (dbError) {
+        this.logger.logError(
+          'Failed to mark webhook event as processed',
+          'WebhookService',
+          'processWebhook',
+          dbError,
+          requestId,
+          { webhookEventId },
+        );
+      }
     }
   }
 
@@ -158,7 +208,6 @@ export class WebhookService {
         requestId,
         { reservationID: payload.reservationID },
       );
-      throw error;
     }
   }
 

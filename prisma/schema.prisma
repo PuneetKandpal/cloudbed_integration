@@ -293,6 +293,53 @@ model AuditLog {
   @@index([level])
 }
 
+// Cancellation Policy Configuration
+model CancellationPolicy {
+  id                     String              @id @default(uuid())
+  
+  // Policy settings
+  propertyId             String?             @unique
+  daysBeforeCheckin      Int                 @default(2)
+  
+  // Metadata
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+  
+  @@index([propertyId])
+}
+
+// Webhook Event tracking
+model WebhookEvent {
+  id                String              @id @default(uuid())
+  
+  // Webhook details
+  eventId           String?
+  eventType         String
+  source            String              @default("CLOUDBED_WEBHOOK")
+  
+  // Context
+  reservationId     String?
+  propertyId        String?
+  
+  // Payload
+  payload           Json
+  headers           Json?
+  
+  // Status
+  processed         Boolean             @default(false)
+  processedAt       DateTime?
+  error             String?             @db.Text
+  
+  // Metadata
+  timestamp         DateTime            @default(now())
+  
+  @@index([eventId])
+  @@index([eventType])
+  @@index([reservationId])
+  @@index([processed])
+  @@index([timestamp])
+}
+
 // Scheduler task tracking
 model ScheduledTask {
   id                String              @id @default(uuid())

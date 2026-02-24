@@ -2,11 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoggerService } from '../common/logger/logger.service';
 import { BookingPolicyType, BookingStatus } from '@prisma/client';
-import { differenceInHours, parseISO, isBefore } from 'date-fns';
+import { differenceInHours, parseISO, isBefore, addDays } from 'date-fns';
 import { CloudbedApiService } from '../cloudbed/cloudbed-api.service';
 import { PaymentService } from '../payment/payment.service';
 import { RiskAssessmentService } from '../risk/risk-assessment.service';
-import { randomUUID } from 'crypto';
+import { CancellationPolicyService } from '../cancellation-policy/cancellation-policy.service';
 
 /**
  * Booking Service
@@ -22,6 +22,7 @@ export class BookingService {
     private readonly cloudbedApi: CloudbedApiService,
     private readonly paymentService: PaymentService,
     private readonly riskService: RiskAssessmentService,
+    private readonly cancellationPolicyService: CancellationPolicyService,
   ) { }
 
   /**
@@ -57,46 +58,33 @@ export class BookingService {
         return;
       }
 
-      // Fetch full reservation details from Cloudbed API
-      const reservationDetails = await this.cloudbedApi.getReservation(
-        payload.reservationID,
-        requestId,
-      );
-
-      const reservationDetailsKeys =
-        typeof reservationDetails === 'object' && reservationDetails !== null
-          ? Object.keys(reservationDetails as Record<string, unknown>)
-          : [];
+      const reservationRateDetails =
+        await this.cloudbedApi.getReservationsWithRateDetails(
+          payload.reservationID,
+          requestId,
+        );
 
       this.logger.logInfo(
-        'Cloudbeds getReservation result',
+        'Cloudbeds getReservationsWithRateDetails (single source of truth)',
         'BookingService',
         'createBookingFromWebhook',
         requestId,
         {
           reservationID: payload.reservationID,
-          topLevelKeys: reservationDetailsKeys,
-          hasAssigned: Array.isArray((reservationDetails)?.assigned),
-          guestListType: typeof (reservationDetails)?.guestList,
+          fullResponse: reservationRateDetails,
         },
       );
 
-      this.logger.logInfo(
-        'Cloudbeds getReservation full response',
-        'BookingService',
-        'createBookingFromWebhook',
-        requestId,
-        {
-          reservationID: payload.reservationID,
-          fullResponse: reservationDetails,
-        },
-      );
+      const rateDetailsObj =
+        typeof reservationRateDetails === 'object' && reservationRateDetails !== null
+          ? (reservationRateDetails as Record<string, any>)
+          : {};
 
-      const rawSource = (reservationDetails)?.source;
+      const rawSource = rateDetailsObj?.source;
       const reservationSourceNameRaw =
         typeof rawSource === 'string'
           ? rawSource
-          : rawSource?.name ?? (reservationDetails)?.sourceName;
+          : rawSource?.name ?? rateDetailsObj?.sourceName;
       const reservationSourceName = String(reservationSourceNameRaw ?? '').trim();
 
       if (reservationSourceName.toLowerCase() !== 'hostelworld') {
@@ -114,92 +102,7 @@ export class BookingService {
         return;
       }
 
-      // Calculate dates
-      const startDate = parseISO(payload.startDate);
-      const endDate = parseISO(payload.endDate);
-      const now = new Date();
-      const isSameDay = differenceInHours(startDate, now) <= 24;
-
-      // Cloudbeds can emit room information either in `assigned` or within the guest list.
-      // Capture whichever roomTypeID is available so we can later match rate plans reliably.
-      const firstGuestKey = Object.keys(reservationDetails?.guestList ?? {})[0];
-
-      const reservationRoomTypeId =
-        reservationDetails?.assigned?.[0]?.roomTypeID ??
-        (firstGuestKey
-          ? reservationDetails?.guestList?.[firstGuestKey]?.rooms?.[0]
-            ?.roomTypeID
-          : undefined);
-
-      // Prefer rate totals coming from `dailyRates` because they reflect the exact OTA pricing
-      // that should match a specific rate plan (especially important for derived/discounted plans).
-      const assignedRoomRates = reservationDetails?.assigned?.[0]?.dailyRates;
-      const reservationRoomRateTotal = Array.isArray(assignedRoomRates)
-        ? assignedRoomRates.reduce((sum: number, dr: any) => {
-          const rate = Number(dr?.rate ?? 0);
-          return sum + (Number.isFinite(rate) ? rate : 0);
-        }, 0)
-        : undefined;
-
-      // Compute a canonical reservation total by checking daily rates, Cloudbeds' `total`,
-      // the `grandTotal`, and finally the room-level total. Using Number.NaN keeps the math
-      // simple while still letting us detect when no valid total is available.
-      const reservationTotalFromTotal = Number(reservationDetails?.total);
-      const reservationTotalFromGrandTotal = Number(
-        reservationDetails?.balanceDetailed?.grandTotal,
-      );
-      const reservationTotalFromRoomTotal = Number(
-        reservationDetails?.assigned?.[0]?.roomTotal,
-      );
-
-      const reservationTotal =
-        Number(reservationRoomRateTotal) > 0
-          ? Number(reservationRoomRateTotal)
-          : Number.isFinite(reservationTotalFromTotal)
-            ? reservationTotalFromTotal
-            : Number.isFinite(reservationTotalFromGrandTotal)
-              ? reservationTotalFromGrandTotal
-              : Number.isFinite(reservationTotalFromRoomTotal)
-                ? reservationTotalFromRoomTotal
-                : Number.NaN;
-
-      this.logger.logInfo(
-        'Reservation calculated totals',
-        'BookingService',
-        'createBookingFromWebhook',
-        requestId,
-        {
-          reservationID: payload.reservationID,
-          reservationRoomTypeId,
-          reservationRoomRateTotal,
-          reservationTotalFromTotal,
-          reservationTotalFromGrandTotal,
-          reservationTotalFromRoomTotal,
-          reservationTotal,
-        },
-      );
-
-      const reservationRateDetails =
-        await this.cloudbedApi.getReservationsWithRateDetails(
-          payload.reservationID,
-          requestId,
-        );
-
-      this.logger.logInfo(
-        'Cloudbeds getReservationsWithRateDetails full response',
-        'BookingService',
-        'createBookingFromWebhook',
-        requestId,
-        {
-          reservationID: payload.reservationID,
-          fullResponse: reservationRateDetails,
-        },
-      );
-
-      const reservationRateDetailsRecord =
-        typeof reservationRateDetails === 'object' && reservationRateDetails !== null
-          ? (reservationRateDetails as Record<string, unknown>)
-          : {};
+      const reservationRateDetailsRecord = rateDetailsObj;
 
       const rooms = Array.isArray((reservationRateDetailsRecord as any)?.rooms)
         ? ((reservationRateDetailsRecord as any).rooms as any[])
@@ -231,6 +134,45 @@ export class BookingService {
         );
         return;
       }
+
+      const startDateStr = String(rateDetailsObj?.reservationCheckIn ?? '');
+      const endDateStr = String(rateDetailsObj?.reservationCheckOut ?? '');
+      const startDate = startDateStr ? parseISO(startDateStr) : new Date();
+      const endDate = endDateStr ? parseISO(endDateStr) : addDays(startDate, 1);
+
+      this.logger.logInfo(
+        'Resolved reservation dates from rate details',
+        'BookingService',
+        'createBookingFromWebhook',
+        requestId,
+        {
+          reservationID: payload.reservationID,
+          reservationCheckIn: startDateStr,
+          reservationCheckOut: endDateStr,
+          startDate,
+          endDate,
+        },
+      );
+
+      const now = new Date();
+      const isSameDay = differenceInHours(startDate, now) <= 24;
+
+      const totalAmount = Number(rateDetailsObj?.total ?? 0);
+      const remainingBalance = Number(rateDetailsObj?.balance ?? totalAmount);
+      const currency = String(rateDetailsObj?.propertyCurrency ?? 'USD');
+
+      this.logger.logInfo(
+        'Reservation financial data from rate details',
+        'BookingService',
+        'createBookingFromWebhook',
+        requestId,
+        {
+          reservationID: payload.reservationID,
+          totalAmount,
+          remainingBalance,
+          currency,
+        },
+      );
 
       const reservationPlanText =
         `${reservationDetailedRoomRateNames.join(' ')}`
@@ -306,33 +248,69 @@ export class BookingService {
 
       const policyType = policyTypeFromReservationRateNames;
 
-      // Extract cancellation deadline for flexible bookings
-      // This is used to determine when to charge the customer
-      const cancellationDeadline =
-        policyType === BookingPolicyType.FLEXIBLE
-          ? this.extractCancellationDeadline({
-            ...(reservationDetails),
-            ratePlan: reservationDetailedRoomRateNames[0] || '',
-            startDate: payload.startDate,
-          })
-          : null;
+      let cancellationDeadline: Date | null = null;
+      if (policyType === BookingPolicyType.FLEXIBLE) {
+        const propertyId = payload.propertyID_str || String(payload.propertyID);
+        const policy = await this.cancellationPolicyService.getCancellationPolicy(
+          propertyId,
+          requestId,
+        );
+        
+        const daysBeforeCheckin = policy.daysBeforeCheckin;
+        cancellationDeadline = new Date(startDate);
+        cancellationDeadline.setDate(cancellationDeadline.getDate() - daysBeforeCheckin);
+        
+        this.logger.logInfo(
+          'Calculated cancellation deadline for flexible booking',
+          'BookingService',
+          'createBookingFromWebhook',
+          requestId,
+          {
+            reservationID: payload.reservationID,
+            propertyId,
+            daysBeforeCheckin,
+            startDate,
+            cancellationDeadline,
+          },
+        );
+      }
 
       // Create booking record
+      const persistedReservationId = String(payload.reservationID);
+      const existingBooking = await this.prisma.booking.findUnique({
+        where: { reservationId: persistedReservationId },
+      });
+
+      if (existingBooking) {
+        this.logger.logInfo(
+          'Skipping booking creation (booking already exists for reservationId)',
+          'BookingService',
+          'createBookingFromWebhook',
+          requestId,
+          {
+            reservationID: payload.reservationID,
+            bookingId: existingBooking.id,
+            reservationId: existingBooking.reservationId,
+          },
+        );
+        return;
+      }
+
       const booking = await this.prisma.booking.create({
         data: {
-          reservationId: `${payload.reservationID}-${randomUUID()}`,
+          reservationId: persistedReservationId + Math.floor(10000 + Math.random() * 90000).toString(),
           propertyId: payload.propertyID_str || String(payload.propertyID),
-          propertyName: reservationDetails.propertyName,
-          propertyAddress: reservationDetails.propertyAddress,
+          propertyName: String(rateDetailsObj?.propertyName ?? ''),
+          propertyAddress: String(rateDetailsObj?.propertyAddress ?? ''),
           startDate,
           endDate,
           policyType,
           status: BookingStatus.CREATED,
-          numberOfGuests: reservationDetails.numberOfGuests || 1,
-          totalAmount: reservationDetails.balance || 0,
+          numberOfGuests: Number(rooms[0]?.adults ?? 1),
+          totalAmount,
           paidAmount: 0,
-          remainingBalance: reservationDetails.balance || 0,
-          currency: reservationDetails.currency || 'USD',
+          remainingBalance,
+          currency,
           roomId: payload.subReservations?.[0]?.roomId,
           subReservations: payload.subReservations,
           rawPayload: payload,
@@ -380,84 +358,242 @@ export class BookingService {
     }
   }
 
-  /**
-   * Determine booking policy type from reservation data
-   * Analyzes rate plan and special requests for policy identification
-   */
-  private determinePolicyType(reservationDetails: unknown): BookingPolicyType {
-    const details: any = reservationDetails as any;
+  private resolveReservationDates(
+    payload: any,
+    reservationDetails: any,
+  ): {
+      startDate: Date;
+      endDate: Date;
+      selectedDateSources: { startDateSource: string; endDateSource: string };
+    } {
+    const selectDate = (
+      candidates: { value?: string; source: string }[],
+      fallback: string,
+      fallbackSource: string,
+    ): { date: Date; source: string } => {
+      for (const candidate of candidates) {
+        if (candidate.value) {
+          return { date: parseISO(String(candidate.value)), source: candidate.source };
+        }
+      }
+      return { date: parseISO(String(fallback)), source: fallbackSource };
+    };
 
-    const ratePlan = String(details?.ratePlan ?? '').toLowerCase();
-    const specialRequests = String(details?.specialRequests ?? '').toLowerCase();
-    const description = String(details?.description ?? '').toLowerCase();
+    const startCandidate = selectDate(
+      [
+        { value: reservationDetails?.startDate, source: 'reservationDetails.startDate' },
+        {
+          value: reservationDetails?.assigned?.[0]?.startDate,
+          source: 'reservationDetails.assigned[0].startDate',
+        },
+      ],
+      payload.startDate,
+      'payload.startDate',
+    );
 
-    const allText = `${ratePlan} ${specialRequests} ${description}`.trim();
+    const endCandidate = selectDate(
+      [
+        { value: reservationDetails?.endDate, source: 'reservationDetails.endDate' },
+        {
+          value: reservationDetails?.assigned?.[0]?.endDate,
+          source: 'reservationDetails.assigned[0].endDate',
+        },
+      ],
+      payload.endDate,
+      'payload.endDate',
+    );
 
-    if (
-      allText.includes('non-refundable') ||
-      allText.includes('nonrefundable')
-    ) {
-      return BookingPolicyType.NON_REFUNDABLE;
-    }
-
-    if (
-      allText.includes('flexible') ||
-      allText.includes('free cancellation') ||
-      allText.includes('cancellation until')
-    ) {
-      return BookingPolicyType.FLEXIBLE;
-    }
-
-    return BookingPolicyType.UNKNOWN;
+    return {
+      startDate: startCandidate.date,
+      endDate: endCandidate.date,
+      selectedDateSources: {
+        startDateSource: startCandidate.source,
+        endDateSource: endCandidate.source,
+      },
+    };
   }
 
   /**
-   * Extract cancellation deadline from reservation data
-   * Parses various formats to find the cancellation deadline
+   * Determine the most reliable reservation total using Cloudbeds priority order.
+   * Logs when no finite value can be derived, so downstream consumers know we're falling back later.
    */
-  private extractCancellationDeadline(
-    reservationDetails: unknown,
-  ): Date | null {
-    try {
-      const details: any = reservationDetails as any;
+  private calculateReservationTotals(
+    reservationDetails: any,
+    context?: { requestId: string; reservationId: string },
+  ): {
+    reservationTotal: number;
+    debug: Record<string, unknown>;
+  } {
+    const assignedRoomRates = reservationDetails?.assigned?.[0]?.dailyRates;
+    const reservationRoomRateTotal = Array.isArray(assignedRoomRates)
+      ? assignedRoomRates.reduce((sum: number, dr: any) => {
+        const rate = Number(dr?.rate ?? 0);
+        return sum + (Number.isFinite(rate) ? rate : 0);
+      }, 0)
+      : undefined;
 
-      const cancellationDateRaw = details?.cancellationDate;
-      if (cancellationDateRaw) {
-        return parseISO(String(cancellationDateRaw));
-      }
+    const reservationTotalFromTotal = Number(reservationDetails?.total);
+    const reservationTotalFromGrandTotal = Number(
+      reservationDetails?.balanceDetailed?.grandTotal,
+    );
+    const reservationTotalFromRoomTotal = Number(
+      reservationDetails?.assigned?.[0]?.roomTotal,
+    );
 
-      // Parse from special requests or description
-      const text = `${String(details?.specialRequests ?? '')} ${String(details?.description ?? '')}`;
+    const reservationTotal =
+      Number(reservationRoomRateTotal) > 0
+        ? Number(reservationRoomRateTotal)
+        : Number.isFinite(reservationTotalFromTotal)
+          ? reservationTotalFromTotal
+          : Number.isFinite(reservationTotalFromGrandTotal)
+            ? reservationTotalFromGrandTotal
+            : Number.isFinite(reservationTotalFromRoomTotal)
+              ? reservationTotalFromRoomTotal
+              : Number.NaN;
 
-      // Common patterns: "free cancellation until 2026-02-15"
-      const datePattern = /cancellation until (\d{4}-\d{2}-\d{2})/i;
-      const match = text.match(datePattern);
-
-      if (match) {
-        return parseISO(match[1]);
-      }
-
-      // If flexible but no date found, assume 2 days before check-in
-      if (
-        String(details?.ratePlan ?? '').toLowerCase().includes('flexible') &&
-        details?.startDate
-      ) {
-        const checkInDate = parseISO(String(details.startDate));
-        checkInDate.setDate(checkInDate.getDate() - 2);
-        return checkInDate;
-      }
-
-      return null;
-    } catch (error) {
-      this.logger.logError(
-        'Failed to extract cancellation deadline',
+    if (!Number.isFinite(reservationTotal)) {
+      this.logger.logWarn(
+        'Unable to derive reservation total from Cloudbeds reservation payload',
         'BookingService',
-        'extractCancellationDeadline',
-        error,
-        '',
+        'calculateReservationTotals',
+        context?.requestId ?? '',
+        {
+          reservationID: context?.reservationId,
+          reservationRoomRateTotal,
+          reservationTotalFromTotal,
+          reservationTotalFromGrandTotal,
+          reservationTotalFromRoomTotal,
+        },
       );
-      return null;
     }
+
+    return {
+      reservationTotal,
+      debug: {
+        reservationRoomRateTotal,
+        reservationTotalFromTotal,
+        reservationTotalFromGrandTotal,
+        reservationTotalFromRoomTotal,
+        reservationTotal,
+      },
+    };
+  }
+
+  private resolveAuthoritativeReservationFields(args: {
+    rateDetails: Record<string, any>;
+    reservationDetails: any;
+    fallbackStartDate: Date;
+    fallbackEndDate: Date;
+    monetarySnapshot: { reservationTotal: number };
+  }): {
+    startDate: Date;
+    endDate: Date;
+    currency: string;
+    totalAmount: number;
+    remainingBalance: number;
+    debug: Record<string, unknown>;
+  } {
+    const selectDate = (
+      candidates: { value?: string; source: string }[],
+      fallback: Date,
+      fallbackSource: string,
+    ): { date: Date; source: string } => {
+      for (const candidate of candidates) {
+        if (candidate.value) {
+          return { date: parseISO(String(candidate.value)), source: candidate.source };
+        }
+      }
+      return { date: fallback, source: fallbackSource };
+    };
+
+    const startSelection = selectDate(
+      [
+        { value: args.rateDetails?.reservationCheckIn, source: 'rateDetails.reservationCheckIn' },
+        {
+          value: args.rateDetails?.rooms?.[0]?.roomCheckIn,
+          source: 'rateDetails.rooms[0].roomCheckIn',
+        },
+      ],
+      args.fallbackStartDate,
+      'calculated.startDate',
+    );
+
+    const endSelection = selectDate(
+      [
+        { value: args.rateDetails?.reservationCheckOut, source: 'rateDetails.reservationCheckOut' },
+        {
+          value: args.rateDetails?.rooms?.[0]?.roomCheckOut,
+          source: 'rateDetails.rooms[0].roomCheckOut',
+        },
+      ],
+      args.fallbackEndDate,
+      'calculated.endDate',
+    );
+
+    const selectNumber = (
+      candidates: { value: number; source: string }[],
+      fallback: number,
+      fallbackSource: string,
+      defaultValue: number,
+    ): { value: number; source: string } => {
+      for (const candidate of candidates) {
+        if (Number.isFinite(candidate.value)) {
+          return candidate;
+        }
+      }
+      if (Number.isFinite(fallback)) {
+        return { value: fallback, source: fallbackSource };
+      }
+      return { value: defaultValue, source: 'default' };
+    };
+
+    const currency = String(
+      args.rateDetails?.propertyCurrency ??
+        args.reservationDetails?.propertyCurrency ??
+        args.reservationDetails?.currency ??
+        'USD',
+    ).trim() || 'USD';
+
+    const totalSelection = selectNumber(
+      [
+        { value: Number(args.rateDetails?.total), source: 'rateDetails.total' },
+      ],
+      args.monetarySnapshot.reservationTotal,
+      'calculated.reservationTotal',
+      Number(args.reservationDetails?.balance ?? 0),
+    );
+
+    const balanceSelection = selectNumber(
+      [
+        { value: Number(args.rateDetails?.balance), source: 'rateDetails.balance' },
+        {
+          value: Number(args.reservationDetails?.balanceDetailed?.grandTotal),
+          source: 'reservationDetails.balanceDetailed.grandTotal',
+        },
+      ],
+      Number(args.reservationDetails?.balance),
+      'reservationDetails.balance',
+      0,
+    );
+
+    return {
+      startDate: startSelection.date,
+      endDate: endSelection.date,
+      currency,
+      totalAmount: totalSelection.value,
+      remainingBalance: balanceSelection.value,
+      debug: {
+        selectedStartDateSource: startSelection.source,
+        selectedEndDateSource: endSelection.source,
+        selectedCurrency: currency,
+        selectedTotalSource: totalSelection.source,
+        selectedBalanceSource: balanceSelection.source,
+        startDate: startSelection.date,
+        endDate: endSelection.date,
+        totalAmount: totalSelection.value,
+        remainingBalance: balanceSelection.value,
+      },
+    };
   }
 
   /**
@@ -479,9 +615,13 @@ export class BookingService {
     await this.riskService.assessBookingRisk(booking.id, requestId);
 
     if (booking.policyType === BookingPolicyType.NON_REFUNDABLE) {
+
+      this.logger.logInfo("Non-refundable policy detected, charging immediately", "BookingService", "triggerPaymentWorkflow", requestId, { bookingId: booking.id });
       // Non-refundable: Charge immediately
       await this.paymentService.processPayment(booking.id, requestId);
     } else if (booking.policyType === BookingPolicyType.FLEXIBLE) {
+
+      this.logger.logInfo("Flexible policy detected, checking cancellation deadline", "BookingService", "triggerPaymentWorkflow", requestId, { bookingId: booking.id });
       // Flexible: Check cancellation deadline
       if (booking.cancellationDeadline) {
         const now = new Date();
@@ -490,7 +630,10 @@ export class BookingService {
           now,
         );
 
+        this.logger.logInfo("checking cancellation deadline", "BookingService", "triggerPaymentWorkflow", requestId, { bookingId: booking.id, hoursUntilDeadline });
+
         if (hoursUntilDeadline <= 0) {
+          this.logger.logInfo("Deadline passed, charge immediately", "BookingService", "triggerPaymentWorkflow", requestId, { bookingId: booking.id, hoursUntilDeadline });
           // Deadline passed, charge immediately
           await this.paymentService.processPayment(booking.id, requestId);
         } else if (hoursUntilDeadline <= 48) {
@@ -507,7 +650,10 @@ export class BookingService {
       }
     } else if (booking.isSameDayCheckIn) {
       // Same-day check-in: Require payment within 1 hour
+      this.logger.logInfo("Same-day check-in: Require payment within 1 hour", "BookingService", "triggerPaymentWorkflow", requestId, { bookingId: booking.id });
       await this.paymentService.processPayment(booking.id, requestId);
+    }else{
+      this.logger.logInfo("No action required", "BookingService", "triggerPaymentWorkflow", requestId, { bookingId: booking.id, booking });
     }
   }
 

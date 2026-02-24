@@ -40,6 +40,21 @@ export class RiskAssessmentService {
         throw new Error('Booking not found');
       }
 
+      this.logger.logInfo(
+        'Loaded booking for risk assessment',
+        'RiskAssessmentService',
+        'assessBookingRisk',
+        requestId,
+        {
+          bookingId,
+          reservationId: booking.reservationId,
+          totalAmountRaw: booking.totalAmount.toString(),
+          remainingBalanceRaw: booking.remainingBalance.toString(),
+          startDate: booking.startDate,
+          numberOfGuests: booking.numberOfGuests,
+        },
+      );
+
       const totalAmount = booking.totalAmount.toNumber();
       const remainingBalance = booking.remainingBalance.toNumber();
 
@@ -51,31 +66,104 @@ export class RiskAssessmentService {
         hoursUntilCheckIn > 24 && hoursUntilCheckIn <= 48;
       const hasMultipleGuests =
         booking.numberOfGuests >
-        parseInt(this.config.get('HIGH_RISK_GUEST_THRESHOLD') || '4');
+        parseInt(this.config.get('HIGH_RISK_GUEST_THRESHOLD') || '2');
+
+      this.logger.logInfo(
+        'Risk factors calculated',
+        'RiskAssessmentService',
+        'assessBookingRisk',
+        requestId,
+        {
+          bookingId,
+          hoursUntilCheckIn,
+          isSameDayCheckIn,
+          isNextDayCheckIn,
+          hasMultipleGuests,
+          totalAmount,
+          remainingBalance,
+        },
+      );
 
       let riskScore = 0;
       let riskLevel: RiskLevel = RiskLevel.LOW;
 
       if (isSameDayCheckIn) {
         riskScore += 50;
+        this.logger.logInfo(
+          'Applied same-day check-in risk score',
+          'RiskAssessmentService',
+          'assessBookingRisk',
+          requestId,
+          { bookingId, increment: 50, riskScore },
+        );
       } else if (isNextDayCheckIn) {
         riskScore += 30;
+        this.logger.logInfo(
+          'Applied next-day check-in risk score',
+          'RiskAssessmentService',
+          'assessBookingRisk',
+          requestId,
+          { bookingId, increment: 30, riskScore },
+        );
       }
 
       if (hasMultipleGuests) {
         riskScore += 20;
+        this.logger.logInfo(
+          'Applied multiple guest risk score',
+          'RiskAssessmentService',
+          'assessBookingRisk',
+          requestId,
+          { bookingId, increment: 20, riskScore },
+        );
       }
 
       if (totalAmount > 500) {
         riskScore += 10;
+        this.logger.logInfo(
+          'Applied high value booking risk score',
+          'RiskAssessmentService',
+          'assessBookingRisk',
+          requestId,
+          { bookingId, increment: 10, riskScore },
+        );
       }
 
       if (riskScore >= 70) {
         riskLevel = RiskLevel.CRITICAL;
+        this.logger.logInfo(
+          'Risk level classified as CRITICAL',
+          'RiskAssessmentService',
+          'assessBookingRisk',
+          requestId,
+          { bookingId, riskScore },
+        );
       } else if (riskScore >= 50) {
         riskLevel = RiskLevel.HIGH;
+        this.logger.logInfo(
+          'Risk level classified as HIGH',
+          'RiskAssessmentService',
+          'assessBookingRisk',
+          requestId,
+          { bookingId, riskScore },
+        );
       } else if (riskScore >= 30) {
         riskLevel = RiskLevel.MEDIUM;
+        this.logger.logInfo(
+          'Risk level classified as MEDIUM',
+          'RiskAssessmentService',
+          'assessBookingRisk',
+          requestId,
+          { bookingId, riskScore },
+        );
+      } else {
+        this.logger.logInfo(
+          'Risk level remains LOW',
+          'RiskAssessmentService',
+          'assessBookingRisk',
+          requestId,
+          { bookingId, riskScore },
+        );
       }
 
       const requiresImmediatePayment =
@@ -83,6 +171,19 @@ export class RiskAssessmentService {
       const priorityForCancellation =
         (riskLevel === RiskLevel.HIGH || riskLevel === RiskLevel.CRITICAL) &&
         remainingBalance > 0;
+
+      this.logger.logInfo(
+        'Derived operational actions from risk assessment',
+        'RiskAssessmentService',
+        'assessBookingRisk',
+        requestId,
+        {
+          bookingId,
+          requiresImmediatePayment,
+          priorityForCancellation,
+          remainingBalance,
+        },
+      );
 
       await this.prisma.riskAssessment.create({
         data: {

@@ -8,6 +8,7 @@ import { CloudbedModule } from './cloudbed/cloudbed.module';
 import { PaymentModule } from './payment/payment.module';
 import { RiskModule } from './risk/risk.module';
 import { EmailModule } from './email/email.module';
+import { CancellationPolicyModule } from './cancellation-policy/cancellation-policy.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { EmailModule } from './email/email.module';
     PaymentModule,
     RiskModule,
     EmailModule,
+    CancellationPolicyModule,
   ],
 })
 export class AppModule {}
