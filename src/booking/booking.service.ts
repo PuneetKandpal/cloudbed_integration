@@ -160,6 +160,13 @@ export class BookingService {
       const totalAmount = Number(rateDetailsObj?.total ?? 0);
       const remainingBalance = Number(rateDetailsObj?.balance ?? totalAmount);
       const currency = String(rateDetailsObj?.propertyCurrency ?? 'USD');
+      const paidFromBalanceDetailed = Number(
+        rateDetailsObj?.balanceDetailed?.paid ?? Number.NaN,
+      );
+      const computedPaid = totalAmount - remainingBalance;
+      const paidAmount = Number.isFinite(paidFromBalanceDetailed)
+        ? paidFromBalanceDetailed
+        : Math.max(computedPaid, 0);
 
       this.logger.logInfo(
         'Reservation financial data from rate details',
@@ -171,6 +178,9 @@ export class BookingService {
           totalAmount,
           remainingBalance,
           currency,
+          paidFromBalanceDetailed,
+          computedPaid,
+          paidAmount,
         },
       );
 
@@ -298,7 +308,7 @@ export class BookingService {
 
       const booking = await this.prisma.booking.create({
         data: {
-          reservationId: persistedReservationId + Math.floor(10000 + Math.random() * 90000).toString(),
+          reservationId: persistedReservationId + requestId,
           propertyId: payload.propertyID_str || String(payload.propertyID),
           propertyName: String(rateDetailsObj?.propertyName ?? ''),
           propertyAddress: String(rateDetailsObj?.propertyAddress ?? ''),
@@ -308,7 +318,7 @@ export class BookingService {
           status: BookingStatus.CREATED,
           numberOfGuests: Number(rooms[0]?.adults ?? 1),
           totalAmount,
-          paidAmount: 0,
+          paidAmount,
           remainingBalance,
           currency,
           roomId: payload.subReservations?.[0]?.roomId,
