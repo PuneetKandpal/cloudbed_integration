@@ -81,6 +81,9 @@ model Booking {
   guestId               String?
   guest                 Guest?              @relation(fields: [guestId], references: [id])
   numberOfGuests        Int                 @default(1)
+  guestEmail            String?             // Primary guest email from Cloudbeds
+  specialRequests       String?             // Raw special requests from Cloudbeds guest data
+  parsedCancellationDeadline DateTime?       // Parsed from specialRequests field
   
   // Policy and Status
   policyType            BookingPolicyType   @default(UNKNOWN)

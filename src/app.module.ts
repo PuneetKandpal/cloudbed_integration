@@ -9,6 +9,7 @@ import { PaymentModule } from './payment/payment.module';
 import { RiskModule } from './risk/risk.module';
 import { EmailModule } from './email/email.module';
 import { CancellationPolicyModule } from './cancellation-policy/cancellation-policy.module';
+import { SchedulerModule as AppSchedulerModule } from './scheduler/scheduler.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { CancellationPolicyModule } from './cancellation-policy/cancellation-pol
     RiskModule,
     EmailModule,
     CancellationPolicyModule,
+    AppSchedulerModule,
   ],
 })
 export class AppModule {}

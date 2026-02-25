@@ -150,7 +150,58 @@ export class CloudbedApiService {
   }
 
   /**
-   * Get guest details by ID
+   * Get guest details by reservation ID
+   * This is the primary method to fetch guest data including email and special requests
+   */
+  async getGuestByReservation(
+    reservationId: string,
+    requestId: string,
+  ): Promise<any> {
+    this.logger.logInfo(
+      'Fetching guest by reservation ID from Cloudbed',
+      'CloudbedApiService',
+      'getGuestByReservation',
+      requestId,
+      { reservationId },
+    );
+
+    try {
+      const response = await this.httpClient.get(`/api/v1.3/getGuest`, {
+        params: { reservationID: reservationId },
+      });
+
+      const guestData = response.data?.data ?? response.data;
+
+      this.logger.logInfo(
+        'Successfully fetched guest data from Cloudbed',
+        'CloudbedApiService',
+        'getGuestByReservation',
+        requestId,
+        {
+          reservationId,
+          guestID: guestData?.guestID,
+          email: guestData?.email,
+          hasSpecialRequests: !!guestData?.specialRequests,
+          fullResponse: guestData,
+        },
+      );
+
+      return guestData;
+    } catch (error) {
+      this.logger.logError(
+        'Failed to fetch guest by reservation from Cloudbed',
+        'CloudbedApiService',
+        'getGuestByReservation',
+        error,
+        requestId,
+        { reservationId },
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Get guest details by guest ID
    */
   async getGuest(guestId: string, requestId: string): Promise<any> {
     this.logger.logInfo(
@@ -166,7 +217,21 @@ export class CloudbedApiService {
         params: { guestID: guestId },
       });
 
-      return response.data.data || response.data;
+      const guestData = response.data?.data ?? response.data;
+
+      this.logger.logInfo(
+        'Successfully fetched guest data',
+        'CloudbedApiService',
+        'getGuest',
+        requestId,
+        {
+          guestId,
+          email: guestData?.email,
+          fullResponse: guestData,
+        },
+      );
+
+      return guestData;
     } catch (error) {
       this.logger.logError(
         'Failed to fetch guest from Cloudbed',

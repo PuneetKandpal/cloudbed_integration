@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoggerService } from '../common/logger/logger.service';
-import { PaymentStatus } from '@prisma/client';
+import { PaymentStatus, Prisma } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 
 /**
@@ -18,16 +18,21 @@ export class PaymentService {
   ) {}
 
   /**
-   * Process payment for booking
-   * Attempts authorization and capture
+   * Authorize payment for a booking
+   * Called by scheduler and payment workflows
+   * Returns payment result for decision-making
    */
-  async processPayment(bookingId: string, requestId: string): Promise<void> {
+  async authorizePayment(
+    bookingId: string,
+    amount: number,
+    requestId: string,
+  ): Promise<{ success: boolean; transactionId?: string; error?: string }> {
     this.logger.logInfo(
-      'Processing payment for booking',
+      'Authorizing payment for booking',
       'PaymentService',
-      'processPayment',
+      'authorizePayment',
       requestId,
-      { bookingId },
+      { bookingId, amount },
     );
 
     try {
@@ -36,26 +41,13 @@ export class PaymentService {
       });
 
       if (!booking) {
-        throw new Error('Booking not found');
-      }
-
-      const remainingBalance = booking.remainingBalance.toNumber();
-
-      if (remainingBalance <= 0) {
-        this.logger.logInfo(
-          'No outstanding balance, skipping payment',
-          'PaymentService',
-          'processPayment',
-          requestId,
-          { bookingId },
-        );
-        return;
+        return { success: false, error: 'Booking not found' };
       }
 
       const payment = await this.prisma.payment.create({
         data: {
           bookingId,
-          amount: booking.remainingBalance,
+          amount,
           currency: booking.currency,
           status: PaymentStatus.PENDING,
           attemptNumber: 1,
@@ -64,7 +56,7 @@ export class PaymentService {
 
       const paymentResult = await this.authorizeAndCharge(
         payment.id,
-        remainingBalance,
+        amount,
         requestId,
       );
 
@@ -87,19 +79,134 @@ export class PaymentService {
         });
 
         this.logger.logInfo(
-          'Payment processed successfully',
+          'Payment authorized and captured successfully',
           'PaymentService',
-          'processPayment',
+          'authorizePayment',
           requestId,
           { bookingId, transactionId: paymentResult.transactionId },
         );
+
+        return paymentResult;
       } else {
-        await this.handlePaymentFailure(
+        await this.prisma.payment.update({
+          where: { id: payment.id },
+          data: {
+            status: PaymentStatus.FAILED,
+            errorMessage: paymentResult.error,
+          },
+        });
+
+        this.logger.logWarn(
+          'Payment authorization failed',
+          'PaymentService',
+          'authorizePayment',
+          requestId,
+          { bookingId, error: paymentResult.error },
+        );
+
+        return paymentResult;
+      }
+    } catch (error) {
+      this.logger.logError(
+        'Failed to authorize payment',
+        'PaymentService',
+        'authorizePayment',
+        error,
+        requestId,
+        { bookingId },
+      );
+      return { success: false, error: String(error) };
+    }
+  }
+
+  /**
+   * Process payment for booking
+   * Attempts authorization and capture
+   */
+  async processPayment(bookingId: string, requestId: string): Promise<void> {
+    this.logger.logInfo(
+      'Processing payment for booking',
+      'PaymentService',
+      'processPayment',
+      requestId,
+      { bookingId },
+    );
+
+    try {
+      await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        const booking = await tx.booking.findUnique({
+          where: { id: bookingId },
+        });
+
+        if (!booking) {
+          throw new Error('Booking not found');
+        }
+
+        const remainingBalance = booking.remainingBalance.toNumber();
+
+        if (remainingBalance <= 0) {
+          this.logger.logInfo(
+            'No outstanding balance, skipping payment',
+            'PaymentService',
+            'processPayment',
+            requestId,
+            { bookingId },
+          );
+          return;
+        }
+
+        const payment = await tx.payment.create({
+          data: {
+            bookingId,
+            amount: booking.remainingBalance,
+            currency: booking.currency,
+            status: PaymentStatus.PENDING,
+            attemptNumber: 1,
+          },
+        });
+
+        const paymentResult = await this.authorizeAndCharge(
           payment.id,
-          paymentResult.error ?? 'Payment failed',
+          remainingBalance,
           requestId,
         );
-      }
+
+        if (paymentResult.success) {
+          await tx.payment.update({
+            where: { id: payment.id },
+            data: {
+              status: PaymentStatus.CAPTURED,
+              transactionId: paymentResult.transactionId,
+              processedAt: new Date(),
+            },
+          });
+
+          await tx.booking.update({
+            where: { id: bookingId },
+            data: {
+              paidAmount: booking.totalAmount,
+              remainingBalance: 0,
+            },
+          });
+
+          this.logger.logInfo(
+            'Payment processed successfully',
+            'PaymentService',
+            'processPayment',
+            requestId,
+            { bookingId, transactionId: paymentResult.transactionId },
+          );
+        } else {
+          await this.handlePaymentFailureTx(
+            tx,
+            payment.id,
+            bookingId,
+            payment.attemptNumber,
+            paymentResult.error ?? 'Payment failed',
+            requestId,
+          );
+        }
+      });
     } catch (error) {
       this.logger.logError(
         'Failed to process payment',
@@ -149,32 +256,28 @@ export class PaymentService {
    * Handle payment failure
    * Schedule retries if within limit
    */
-  private async handlePaymentFailure(
+  private async handlePaymentFailureTx(
+    tx: Prisma.TransactionClient,
     paymentId: string,
+    bookingId: string,
+    attemptNumber: number,
     errorMessage: string,
     requestId: string,
   ): Promise<void> {
     this.logger.logWarn(
       'Payment failed, handling failure',
       'PaymentService',
-      'handlePaymentFailure',
+      'handlePaymentFailureTx',
       requestId,
-      { paymentId, errorMessage },
+      { paymentId, bookingId, attemptNumber, errorMessage },
     );
-
-    const payment = await this.prisma.payment.findUnique({
-      where: { id: paymentId },
-      include: { booking: true },
-    });
-
-    if (!payment) return;
 
     const maxAttempts = parseInt(this.config.get('PAYMENT_MAX_RETRIES') || '3');
 
-    if (payment.attemptNumber < maxAttempts) {
+    if (attemptNumber < maxAttempts) {
       const nextRetryAt = new Date(Date.now() + 3600000);
 
-      await this.prisma.payment.update({
+      await tx.payment.update({
         where: { id: paymentId },
         data: {
           status: PaymentStatus.FAILED,
@@ -184,14 +287,14 @@ export class PaymentService {
       });
 
       this.logger.logInfo(
-        `Payment scheduled for retry attempt ${payment.attemptNumber + 1}`,
+        `Payment scheduled for retry attempt ${attemptNumber + 1}`,
         'PaymentService',
-        'handlePaymentFailure',
+        'handlePaymentFailureTx',
         requestId,
         { paymentId, nextRetryAt },
       );
     } else {
-      await this.prisma.payment.update({
+      await tx.payment.update({
         where: { id: paymentId },
         data: {
           status: PaymentStatus.FAILED,
@@ -199,18 +302,18 @@ export class PaymentService {
         },
       });
 
-      await this.prisma.booking.update({
-        where: { id: payment.bookingId },
+      await tx.booking.update({
+        where: { id: bookingId },
         data: { requiresManagerApproval: true },
       });
 
       this.logger.logError(
         'Payment failed after max retries, requires manager approval',
         'PaymentService',
-        'handlePaymentFailure',
+        'handlePaymentFailureTx',
         new Error(errorMessage),
         requestId,
-        { paymentId, bookingId: payment.bookingId },
+        { paymentId, bookingId },
       );
     }
   }

@@ -30,25 +30,57 @@ export class EmailService {
   }
 
   /**
-   * Send payment reminder email
+   * Send payment reminder email with booking details
    */
   async sendPaymentReminder(
     bookingId: string,
-    guestEmail: string,
+    bookingDetails: {
+      guestEmail: string;
+      guestName?: string;
+      reservationId: string;
+      propertyName: string;
+      startDate: Date;
+      endDate: Date;
+      totalAmount: number;
+      currency: string;
+      cancellationDeadline?: Date;
+    },
     requestId: string,
   ): Promise<void> {
-    const subject = 'Payment Reminder for Your Upcoming Reservation';
+    this.logger.logInfo(
+      'Preparing payment reminder email',
+      'EmailService',
+      'sendPaymentReminder',
+      requestId,
+      { bookingId, guestEmail: bookingDetails.guestEmail, reservationId: bookingDetails.reservationId },
+    );
+
+    const subject = `Payment Required: Reservation ${bookingDetails.reservationId}`;
     const body = `
-      <h2>Payment Reminder</h2>
-      <p>Dear Guest,</p>
-      <p>This is a reminder that payment is required for your upcoming reservation.</p>
-      <p>Please complete your payment to secure your booking.</p>
-      <p>Thank you,<br/>Your Hotel Team</p>
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #2c3e50;">Payment Reminder</h2>
+        <p>Dear ${bookingDetails.guestName || 'Guest'},</p>
+        <p>This is a friendly reminder that payment is required for your upcoming reservation at <strong>${bookingDetails.propertyName}</strong>.</p>
+        
+        <div style="background-color: #f8f9fa; padding: 15px; margin: 20px 0; border-left: 4px solid #007bff;">
+          <h3 style="margin-top: 0;">Booking Details</h3>
+          <p><strong>Reservation ID:</strong> ${bookingDetails.reservationId}</p>
+          <p><strong>Check-in:</strong> ${bookingDetails.startDate.toLocaleDateString()}</p>
+          <p><strong>Check-out:</strong> ${bookingDetails.endDate.toLocaleDateString()}</p>
+          <p><strong>Amount Due:</strong> ${bookingDetails.totalAmount} ${bookingDetails.currency}</p>
+          ${bookingDetails.cancellationDeadline ? `<p><strong>Free Cancellation Until:</strong> ${bookingDetails.cancellationDeadline.toLocaleString()}</p>` : ''}
+        </div>
+        
+        <p>Please complete your payment to secure your booking.</p>
+        <p>If you have any questions, please contact our support team.</p>
+        
+        <p style="margin-top: 30px;">Thank you,<br/><strong>${bookingDetails.propertyName}</strong></p>
+      </div>
     `;
 
     await this.sendEmail(
       bookingId,
-      guestEmail,
+      bookingDetails.guestEmail,
       subject,
       body,
       EmailType.PAYMENT_REMINDER,
@@ -114,26 +146,103 @@ export class EmailService {
   }
 
   /**
-   * Send manager approval request
+   * Send support notification for risky bookings requiring payment
+   */
+  async sendSupportNotification(
+    bookingId: string,
+    bookingDetails: {
+      guestEmail: string;
+      guestName?: string;
+      reservationId: string;
+      propertyName: string;
+      startDate: Date;
+      riskLevel: string;
+      totalAmount: number;
+      currency: string;
+    },
+    requestId: string,
+  ): Promise<void> {
+    const supportEmail = this.config.get('SUPPORT_EMAIL') || 'support@hotel.com';
+    const subject = `High Risk Booking Alert: ${bookingDetails.reservationId}`;
+    const body = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #dc3545;">High Risk Booking Alert</h2>
+        <p>A high-risk booking requires support team attention:</p>
+        
+        <div style="background-color: #fff3cd; padding: 15px; margin: 20px 0; border-left: 4px solid #ffc107;">
+          <p><strong>Booking ID:</strong> ${bookingId}</p>
+          <p><strong>Reservation ID:</strong> ${bookingDetails.reservationId}</p>
+          <p><strong>Guest:</strong> ${bookingDetails.guestName || 'N/A'} (${bookingDetails.guestEmail})</p>
+          <p><strong>Property:</strong> ${bookingDetails.propertyName}</p>
+          <p><strong>Check-in:</strong> ${bookingDetails.startDate.toLocaleDateString()}</p>
+          <p><strong>Amount:</strong> ${bookingDetails.totalAmount} ${bookingDetails.currency}</p>
+          <p><strong>Risk Level:</strong> <span style="color: #dc3545;">${bookingDetails.riskLevel}</span></p>
+        </div>
+        
+        <p>Action Required: Contact guest to confirm payment within 24 hours.</p>
+      </div>
+    `;
+
+    await this.sendEmail(
+      bookingId,
+      supportEmail,
+      subject,
+      body,
+      EmailType.SUPPORT_NOTIFICATION,
+      requestId,
+    );
+  }
+
+  /**
+   * Send manager approval request for failed payments
    */
   async sendManagerApprovalRequest(
     bookingId: string,
-    bookingDetails: any,
+    bookingDetails: {
+      reservationId: string;
+      guestEmail: string;
+      guestName?: string;
+      propertyName: string;
+      startDate: Date;
+      totalAmount: number;
+      currency: string;
+      paymentAttempts: number;
+      riskLevel?: string;
+    },
     requestId: string,
   ): Promise<void> {
-    const managerEmail =
-      this.config.get('MANAGER_EMAIL') || 'manager@hotel.com';
-    const subject = 'Manager Approval Required - Payment Failed';
+    this.logger.logInfo(
+      'Sending manager approval request',
+      'EmailService',
+      'sendManagerApprovalRequest',
+      requestId,
+      { bookingId, reservationId: bookingDetails.reservationId, paymentAttempts: bookingDetails.paymentAttempts },
+    );
+
+    const managerEmail = this.config.get('MANAGER_EMAIL') || 'manager@hotel.com';
+    const subject = `Manager Approval Required: ${bookingDetails.reservationId}`;
     const body = `
-      <h2>Manager Approval Required</h2>
-      <p>The following booking requires your attention:</p>
-      <ul>
-        <li>Booking ID: ${bookingId}</li>
-        <li>Reservation ID: ${bookingDetails.reservationId}</li>
-        <li>Amount: ${bookingDetails.totalAmount}</li>
-        <li>Check-in: ${bookingDetails.startDate}</li>
-      </ul>
-      <p>Payment has failed after maximum retries. Please review and decide on cancellation.</p>
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #dc3545;">Manager Approval Required - Payment Failed</h2>
+        <p>The following booking requires your immediate attention and authorization for cancellation:</p>
+        
+        <div style="background-color: #f8d7da; padding: 15px; margin: 20px 0; border-left: 4px solid #dc3545;">
+          <h3 style="margin-top: 0;">Booking Details</h3>
+          <p><strong>Booking ID:</strong> ${bookingId}</p>
+          <p><strong>Reservation ID:</strong> ${bookingDetails.reservationId}</p>
+          <p><strong>Guest:</strong> ${bookingDetails.guestName || 'N/A'} (${bookingDetails.guestEmail})</p>
+          <p><strong>Property:</strong> ${bookingDetails.propertyName}</p>
+          <p><strong>Check-in Date:</strong> ${bookingDetails.startDate.toLocaleDateString()}</p>
+          <p><strong>Amount Due:</strong> ${bookingDetails.totalAmount} ${bookingDetails.currency}</p>
+          <p><strong>Payment Attempts:</strong> ${bookingDetails.paymentAttempts}</p>
+          ${bookingDetails.riskLevel ? `<p><strong>Risk Level:</strong> ${bookingDetails.riskLevel}</p>` : ''}
+        </div>
+        
+        <p><strong>Status:</strong> Payment has failed after ${bookingDetails.paymentAttempts} attempts.</p>
+        <p><strong>Action Required:</strong> Please review this booking and authorize cancellation if appropriate.</p>
+        
+        <p style="margin-top: 30px;">This is an automated notification from the Booking Management System.</p>
+      </div>
     `;
 
     await this.sendEmail(

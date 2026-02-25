@@ -258,8 +258,71 @@ export class BookingService {
 
       const policyType = policyTypeFromReservationRateNames;
 
-      let cancellationDeadline: Date | null = null;
-      if (policyType === BookingPolicyType.FLEXIBLE) {
+      // Fetch guest data including email and special requests
+      const guestData = await this.cloudbedApi.getGuestByReservation(
+        payload.reservationID,
+        requestId,
+      );
+
+      const guestEmail = String(guestData?.email ?? '');
+      const specialRequests = String(guestData?.specialRequests ?? '');
+
+      this.logger.logInfo(
+        'Guest data retrieved from Cloudbeds',
+        'BookingService',
+        'createBookingFromWebhook',
+        requestId,
+        {
+          reservationID: payload.reservationID,
+          guestID: guestData?.guestID,
+          guestEmail,
+          hasSpecialRequests: !!specialRequests,
+          specialRequestsPreview: specialRequests.substring(0, 100),
+        },
+      );
+
+      // Parse cancellation deadline from special requests
+      // Example: "Can be cancelled until: 2026-02-25 17:00:00."
+      let parsedCancellationDeadline: Date | null = null;
+      if (specialRequests) {
+        const cancelMatch = specialRequests.match(
+          /cancelled until:\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})/i,
+        );
+        if (cancelMatch) {
+          parsedCancellationDeadline = parseISO(cancelMatch[1]);
+          this.logger.logInfo(
+            'Parsed cancellation deadline from special requests',
+            'BookingService',
+            'createBookingFromWebhook',
+            requestId,
+            {
+              reservationID: payload.reservationID,
+              rawSpecialRequests: specialRequests,
+              parsedCancellationDeadline,
+            },
+          );
+        }
+      }
+
+      // Determine final cancellation deadline preference: parsed > DB config (flex only)
+      let cancellationDeadline: Date | null = parsedCancellationDeadline;
+
+      if (parsedCancellationDeadline) {
+        this.logger.logInfo(
+          'Using cancellation deadline parsed from special requests (overrides config)',
+          'BookingService',
+          'createBookingFromWebhook',
+          requestId,
+          {
+            reservationID: payload.reservationID,
+            parsedCancellationDeadline,
+            reason: 'Cloudbeds guest special requests provided explicit deadline',
+          },
+        );
+      }
+
+      // Fall back to config only when parsed deadline is unavailable and policy is FLEXIBLE
+      if (!cancellationDeadline && policyType === BookingPolicyType.FLEXIBLE) {
         const propertyId = payload.propertyID_str || String(payload.propertyID);
         const policy = await this.cancellationPolicyService.getCancellationPolicy(
           propertyId,
@@ -271,7 +334,7 @@ export class BookingService {
         cancellationDeadline.setDate(cancellationDeadline.getDate() - daysBeforeCheckin);
         
         this.logger.logInfo(
-          'Calculated cancellation deadline for flexible booking',
+          'Calculated config-based cancellation deadline for flexible booking',
           'BookingService',
           'createBookingFromWebhook',
           requestId,
@@ -281,6 +344,9 @@ export class BookingService {
             daysBeforeCheckin,
             startDate,
             cancellationDeadline,
+            parsedCancellationDeadline,
+            usedParsedDeadline: false,
+            reason: 'Parsed deadline not available – fallback to DB config',
           },
         );
       }
@@ -317,6 +383,9 @@ export class BookingService {
           policyType,
           status: BookingStatus.CREATED,
           numberOfGuests: Number(rooms[0]?.adults ?? 1),
+          guestEmail,
+          specialRequests,
+          parsedCancellationDeadline,
           totalAmount,
           paidAmount,
           remainingBalance,
@@ -646,16 +715,6 @@ export class BookingService {
           this.logger.logInfo("Deadline passed, charge immediately", "BookingService", "triggerPaymentWorkflow", requestId, { bookingId: booking.id, hoursUntilDeadline });
           // Deadline passed, charge immediately
           await this.paymentService.processPayment(booking.id, requestId);
-        } else if (hoursUntilDeadline <= 48) {
-          // Less than 2 days, send reminder
-          // Scheduler will handle this
-          this.logger.logInfo(
-            'Flexible booking within 2 days of deadline, will send reminders',
-            'BookingService',
-            'triggerPaymentWorkflow',
-            requestId,
-            { bookingId: booking.id, hoursUntilDeadline },
-          );
         }
       }
     } else if (booking.isSameDayCheckIn) {
