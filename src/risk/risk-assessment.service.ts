@@ -61,12 +61,19 @@ export class RiskAssessmentService {
       const now = new Date();
       const hoursUntilCheckIn = differenceInHours(booking.startDate, now);
 
+      const roomCount = Array.isArray(booking.subReservations)
+        ? booking.subReservations.length
+        : 1;
+
       const isSameDayCheckIn = hoursUntilCheckIn <= 24;
       const isNextDayCheckIn =
         hoursUntilCheckIn > 24 && hoursUntilCheckIn <= 48;
-      const hasMultipleGuests =
-        booking.numberOfGuests >
-        parseInt(this.config.get('HIGH_RISK_GUEST_THRESHOLD') || '2');
+
+      const roomThresholdRaw =
+        this.config.get('HIGH_RISK_ROOM_THRESHOLD') ??
+        '2';
+
+      const hasMultipleGuests = roomCount > parseInt(roomThresholdRaw);
 
       this.logger.logInfo(
         'Risk factors calculated',
@@ -78,7 +85,9 @@ export class RiskAssessmentService {
           hoursUntilCheckIn,
           isSameDayCheckIn,
           isNextDayCheckIn,
-          hasMultipleGuests,
+          roomCount,
+          roomThreshold: parseInt(roomThresholdRaw),
+          hasMultipleRooms: hasMultipleGuests,
           totalAmount,
           remainingBalance,
         },
@@ -110,7 +119,7 @@ export class RiskAssessmentService {
       if (hasMultipleGuests) {
         riskScore += 20;
         this.logger.logInfo(
-          'Applied multiple guest risk score',
+          'Applied multiple room risk score',
           'RiskAssessmentService',
           'assessBookingRisk',
           requestId,
@@ -200,12 +209,13 @@ export class RiskAssessmentService {
             factors: {
               sameDayCheckIn: isSameDayCheckIn,
               nextDayCheckIn: isNextDayCheckIn,
-              multipleGuests: hasMultipleGuests,
+              roomCount,
+              multipleRooms: hasMultipleGuests,
               highValue: totalAmount > 500,
             },
             scores: {
               timingScore: isSameDayCheckIn ? 50 : isNextDayCheckIn ? 30 : 0,
-              guestScore: hasMultipleGuests ? 20 : 0,
+              roomScore: hasMultipleGuests ? 20 : 0,
               valueScore: totalAmount > 500 ? 10 : 0,
               totalScore: riskScore,
             },

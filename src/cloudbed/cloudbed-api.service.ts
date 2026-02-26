@@ -298,6 +298,50 @@ export class CloudbedApiService {
   }
 
   /**
+   * Get currency settings for the property/system
+   * Cloudbeds: GET /api/v1.3/getCurrencySettings
+   */
+  async getCurrencySettings(requestId: string): Promise<any> {
+    this.logger.logInfo(
+      'Fetching currency settings from Cloudbed',
+      'CloudbedApiService',
+      'getCurrencySettings',
+      requestId,
+      {},
+    );
+
+    try {
+      const response = await this.httpClient.get(`/api/v1.3/getCurrencySettings`);
+
+      const currencySettings = response.data?.data ?? response.data;
+
+      this.logger.logInfo(
+        'Successfully fetched currency settings from Cloudbed',
+        'CloudbedApiService',
+        'getCurrencySettings',
+        requestId,
+        {
+          status: response.status,
+          defaultCurrency: currencySettings?.default,
+          hasFormat: !!currencySettings?.format,
+          fullResponse: currencySettings,
+        },
+      );
+
+      return currencySettings;
+    } catch (error) {
+      this.logger.logError(
+        'Failed to fetch currency settings from Cloudbed',
+        'CloudbedApiService',
+        'getCurrencySettings',
+        error,
+        requestId,
+      );
+      return null;
+    }
+  }
+
+  /**
    * Mock reservation data for development/fallback
    */
   private getMockReservationData(reservationId: string): any {

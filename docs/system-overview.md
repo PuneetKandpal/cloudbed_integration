@@ -12,6 +12,7 @@ Automate end-to-end handling of Hostelworld reservations pulled from Cloudbeds, 
 2. **Cloudbeds API:**
    - `getReservationsWithRateDetails`: authoritative booking payload.
    - `getGuest?reservationID=`: guest email + `specialRequests` (free-cancel-until text).
+   - `getCurrencySettings`: default system currency and formatting.
 3. **PostgreSQL via Prisma** – single source of truth for bookings, payments, risk, policies.
 
 ### 2.2 Key Services
@@ -124,8 +125,9 @@ All email attempts recorded in `Email` table with status transitions (PENDING �
 1. **Time-to-check-in**
    - ≤24h: +50 points (same-day flag).
    - 24-48h: +30 points.
-2. **Guest count**
-   - > `HIGH_RISK_GUEST_THRESHOLD` (default 2): +20.
+2. **Room count**
+   - Room count is derived from `Booking.subReservations.length` (fallback = 1).
+   - > `HIGH_RISK_ROOM_THRESHOLD` (default 2): +20.
 3. **Booking value**
    - `totalAmount > 500` (currency-specific) : +10.
 

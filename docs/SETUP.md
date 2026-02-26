@@ -70,6 +70,9 @@ PAYMENT_GATEWAY_SECRET=your_payment_secret
 PAYMENT_MAX_RETRIES=3
 
 # Risk Assessment
+HIGH_RISK_ROOM_THRESHOLD=4
+
+# Legacy (fallback)
 HIGH_RISK_GUEST_THRESHOLD=4
 
 # Logging
