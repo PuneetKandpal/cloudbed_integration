@@ -1,0 +1,62 @@
+{
+  "info": {
+    "name": "Cloudbed Occupancy API",
+    "description": "Collection to test the occupancy snapshot endpoint exposed by the NestJS application.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": {
+      "major": 1,
+      "minor": 0,
+      "patch": 0
+    }
+  },
+  "item": [
+    {
+      "name": "Get Daily Occupancy",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/occupancy/daily?propertyId={{propertyId}}&date={{date}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "occupancy",
+            "daily"
+          ],
+          "query": [
+            {
+              "key": "propertyId",
+              "value": "{{propertyId}}"
+            },
+            {
+              "key": "date",
+              "value": "{{date}}"
+            }
+          ]
+        },
+        "description": "Fetches the occupancy snapshot for the requested property and date."
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000"
+    },
+    {
+      "key": "propertyId",
+      "value": "317803"
+    },
+    {
+      "key": "date",
+      "value": "2026-02-26"
+    }
+  ]
+}

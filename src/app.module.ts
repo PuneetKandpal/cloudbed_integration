@@ -10,6 +10,7 @@ import { RiskModule } from './risk/risk.module';
 import { EmailModule } from './email/email.module';
 import { CancellationPolicyModule } from './cancellation-policy/cancellation-policy.module';
 import { SchedulerModule as AppSchedulerModule } from './scheduler/scheduler.module';
+import { OccupancyModule } from './occupancy/occupancy.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { SchedulerModule as AppSchedulerModule } from './scheduler/scheduler.mod
     EmailModule,
     CancellationPolicyModule,
     AppSchedulerModule,
+    OccupancyModule,
   ],
 })
 export class AppModule {}

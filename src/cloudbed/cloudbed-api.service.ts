@@ -1,4 +1,4 @@
-import { Injectable, HttpException } from '@nestjs/common';
+import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { LoggerService } from '../common/logger/logger.service';
 import axios, { AxiosInstance } from 'axios';
@@ -27,6 +27,128 @@ export class CloudbedApiService {
       },
       timeout: 30000,
     });
+  }
+
+  /**
+   * Fetch rooms (optionally scoped to date range to retrieve unassigned rooms)
+   */
+  async getRooms(
+    params: {
+      propertyIDs?: string;
+      roomTypeID?: string;
+      roomTypeNameShort?: string;
+      startDate?: string;
+      endDate?: string;
+      includeRoomRelations?: number;
+    },
+    requestId: string,
+  ): Promise<any[]> {
+    this.logger.logInfo(
+      'Fetching rooms from Cloudbed',
+      'CloudbedApiService',
+      'getRooms',
+      requestId,
+      params,
+    );
+
+    try {
+      const response = await this.httpClient.get(`/api/v1.3/getRooms`, {
+        params,
+      });
+
+      const roomData = Array.isArray(response.data?.data)
+        ? response.data.data
+        : [];
+
+      this.logger.logInfo(
+        'Successfully fetched rooms from Cloudbed',
+        'CloudbedApiService',
+        'getRooms',
+        requestId,
+        {
+          status: response.status,
+          propertyCount: roomData.length,
+        },
+        response.data,
+      );
+
+      return roomData;
+    } catch (error) {
+      this.logger.logError(
+        'Failed to fetch rooms from Cloudbed',
+        'CloudbedApiService',
+        'getRooms',
+        error,
+        requestId,
+        params,
+      );
+      throw new HttpException(
+        'Unable to fetch rooms from Cloudbed',
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
+  }
+
+  /**
+   * Fetch room blocks / out-of-service rooms
+   */
+  async getRoomBlocks(
+    params: {
+      propertyID?: string;
+      roomBlockID?: string;
+      roomTypeID?: string;
+      roomID?: string;
+      startDate?: string;
+      endDate?: string;
+      pageNumber?: number;
+      pageSize?: number;
+    },
+    requestId: string,
+  ): Promise<any[]> {
+    this.logger.logInfo(
+      'Fetching room blocks from Cloudbed',
+      'CloudbedApiService',
+      'getRoomBlocks',
+      requestId,
+      params,
+    );
+
+    try {
+      const response = await this.httpClient.get(`/api/v1.3/getRoomBlocks`, {
+        params,
+      });
+
+      const blockData = Array.isArray(response.data?.data)
+        ? response.data.data
+        : [];
+
+      this.logger.logInfo(
+        'Successfully fetched room blocks from Cloudbed',
+        'CloudbedApiService',
+        'getRoomBlocks',
+        requestId,
+        {
+          status: response.status,
+          blockCount: blockData.length,
+        },
+        response.data,
+      );
+
+      return blockData;
+    } catch (error) {
+      this.logger.logError(
+        'Failed to fetch room blocks from Cloudbed',
+        'CloudbedApiService',
+        'getRoomBlocks',
+        error,
+        requestId,
+        params,
+      );
+      throw new HttpException(
+        'Unable to fetch room blocks from Cloudbed',
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
   }
 
   /**
