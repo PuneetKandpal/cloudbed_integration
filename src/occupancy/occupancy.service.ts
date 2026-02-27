@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { format, isValid, parseISO } from 'date-fns';
+import { addDays, format, isValid, parseISO } from 'date-fns';
 import { CloudbedApiService } from '../cloudbed/cloudbed-api.service';
 import { LoggerService } from '../common/logger/logger.service';
 
@@ -53,6 +53,7 @@ export class OccupancyService {
 
     const targetDate = this.resolveDate(date);
     const dateString = format(targetDate, 'yyyy-MM-dd');
+    const nextDateString = format(addDays(targetDate, 1), 'yyyy-MM-dd');
 
     this.logger.logInfo(
       'Fetching occupancy snapshot',
@@ -69,7 +70,7 @@ export class OccupancyService {
           {
             propertyIDs: resolvedPropertyId,
             startDate: dateString,
-            endDate: dateString,
+            endDate: nextDateString,
           },
           requestId,
         ),
@@ -77,7 +78,7 @@ export class OccupancyService {
           {
             propertyID: resolvedPropertyId,
             startDate: dateString,
-            endDate: dateString,
+            endDate: nextDateString,
           },
           requestId,
         ),
