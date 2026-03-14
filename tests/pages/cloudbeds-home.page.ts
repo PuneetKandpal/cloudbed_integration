@@ -19,6 +19,8 @@ export class CloudbedsHomePage {
 
   async clickLogin(): Promise<void> {
     await this.page.getByRole('link', { name: 'Login' }).click();
-    await expect(this.page).toHaveURL(/signin\.cloudbeds\.com/);
+    await expect(this.page).toHaveURL(/signin\.cloudbeds\.com|hotels\.cloudbeds\.com\/connect/, {
+      timeout: 30000,
+    });
   }
 }

@@ -382,3 +382,20 @@ model ScheduledTask {
   @@index([scheduledFor])
   @@index([status])
 }
+
+model CloudbedsSession {
+  id                 String   @id @default(uuid())
+  username           String
+  propertyId         String
+  encryptedState     String   @db.Text
+  iv                 String
+  authTag            String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  expiresAt          DateTime?
+
+  @@unique([username, propertyId])
+  @@index([username])
+  @@index([propertyId])
+  @@index([expiresAt])
+}
