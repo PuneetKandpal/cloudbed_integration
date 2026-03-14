@@ -255,6 +255,83 @@ export class EmailService {
     );
   }
 
+  async sendAdminCancellationRequest(
+    bookingId: string,
+    recipients: string[],
+    bookingDetails: {
+      reservationId: string;
+      guestEmail: string;
+      guestName?: string;
+      propertyName: string;
+      startDate: Date;
+      totalAmount: number;
+      currency: string;
+      paymentAttempts: number;
+      occupancy?: {
+        occupancyRate: number;
+        occupiedRooms: number;
+        totalRooms: number;
+        blockedRooms: number;
+      };
+    },
+    requestId: string,
+  ): Promise<void> {
+    const subject = `Action Required: Cancel Reservation ${bookingDetails.reservationId}`;
+
+    const occupancyBlock = bookingDetails.occupancy
+      ? `
+        <div style="background-color: #f8f9fa; padding: 15px; margin: 20px 0; border-left: 4px solid #0d6efd;">
+          <h3 style="margin-top: 0;">Occupancy Status (Check-in Date)</h3>
+          <p><strong>Occupancy Rate:</strong> ${bookingDetails.occupancy.occupancyRate}%</p>
+          <p><strong>Occupied Rooms:</strong> ${bookingDetails.occupancy.occupiedRooms} / ${bookingDetails.occupancy.totalRooms}</p>
+          <p><strong>Blocked Rooms:</strong> ${bookingDetails.occupancy.blockedRooms}</p>
+        </div>
+      `
+      : '';
+
+    const body = `
+      <div style="font-family: Arial, sans-serif; max-width: 700px; margin: 0 auto;">
+        <h2 style="color: #dc3545;">Cancellation Requested - Payment Failed</h2>
+        <p>Payment has failed <strong>${bookingDetails.paymentAttempts}</strong> times for the following booking.</p>
+        <p><strong>Action Required:</strong> Please cancel this reservation in Cloudbeds.</p>
+        
+        <div style="background-color: #fff3cd; padding: 15px; margin: 20px 0; border-left: 4px solid #ffc107;">
+          <h3 style="margin-top: 0;">Booking Details</h3>
+          <p><strong>Booking ID:</strong> ${bookingId}</p>
+          <p><strong>Reservation ID:</strong> ${bookingDetails.reservationId}</p>
+          <p><strong>Guest:</strong> ${bookingDetails.guestName || 'N/A'} (${bookingDetails.guestEmail})</p>
+          <p><strong>Property:</strong> ${bookingDetails.propertyName}</p>
+          <p><strong>Check-in Date:</strong> ${bookingDetails.startDate.toLocaleDateString()}</p>
+          <p><strong>Amount Due:</strong> ${bookingDetails.totalAmount} ${bookingDetails.currency}</p>
+          <p><strong>Payment Attempts:</strong> ${bookingDetails.paymentAttempts}</p>
+        </div>
+
+        ${occupancyBlock}
+
+        <p style="margin-top: 25px;">This is an automated notification from the Booking Management System.</p>
+      </div>
+    `;
+
+    const uniqueRecipients = Array.from(
+      new Set(
+        (recipients || [])
+          .map((r) => String(r || '').trim())
+          .filter(Boolean),
+      ),
+    );
+
+    for (const recipient of uniqueRecipients) {
+      await this.sendEmail(
+        bookingId,
+        recipient,
+        subject,
+        body,
+        EmailType.ADMIN_CANCELLATION_REQUEST,
+        requestId,
+      );
+    }
+  }
+
   /**
    * Core email sending function
    */

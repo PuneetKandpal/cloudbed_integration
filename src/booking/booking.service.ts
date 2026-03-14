@@ -25,6 +25,37 @@ export class BookingService {
     private readonly cancellationPolicyService: CancellationPolicyService,
   ) { }
 
+  private parseCloudbedsDate(value: string, source: string): Date {
+    const raw = String(value ?? '').trim();
+    if (!raw) {
+      return new Date();
+    }
+
+    // Cloudbeds sometimes returns date-only strings (YYYY-MM-DD) for check-in/out.
+    // If we parse those as local time, they shift when stored/inspected in UTC.
+    // To keep the calendar date consistent, treat date-only values as UTC midnight.
+    const dateOnlyMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (dateOnlyMatch) {
+      const year = Number(dateOnlyMatch[1]);
+      const month = Number(dateOnlyMatch[2]);
+      const day = Number(dateOnlyMatch[3]);
+      return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+    }
+
+    try {
+      return parseISO(raw);
+    } catch {
+      this.logger.logWarn(
+        'Failed to parse Cloudbeds date string; falling back to Date constructor',
+        'BookingService',
+        'parseCloudbedsDate',
+        this.logger.generateRequestId(),
+        { source, raw },
+      );
+      return new Date(raw);
+    }
+  }
+
   /**
    * Create booking from Cloudbed webhook
    * Main entry point for new reservations
@@ -137,8 +168,12 @@ export class BookingService {
 
       const startDateStr = String(rateDetailsObj?.reservationCheckIn ?? '');
       const endDateStr = String(rateDetailsObj?.reservationCheckOut ?? '');
-      const startDate = startDateStr ? parseISO(startDateStr) : new Date();
-      const endDate = endDateStr ? parseISO(endDateStr) : addDays(startDate, 1);
+      const startDate = startDateStr
+        ? this.parseCloudbedsDate(startDateStr, 'rateDetails.reservationCheckIn')
+        : new Date();
+      const endDate = endDateStr
+        ? this.parseCloudbedsDate(endDateStr, 'rateDetails.reservationCheckOut')
+        : addDays(startDate, 1);
 
       this.logger.logInfo(
         'Resolved reservation dates from rate details',
@@ -374,8 +409,8 @@ export class BookingService {
 
       const booking = await this.prisma.booking.create({
         data: {
-          reservationId: persistedReservationId + requestId,
-          propertyId: payload.propertyID_str || String(payload.propertyID),
+          reservationId: persistedReservationId,
+          propertyId: payload.propertyID_str,
           propertyName: String(rateDetailsObj?.propertyName ?? ''),
           propertyAddress: String(rateDetailsObj?.propertyAddress ?? ''),
           startDate,
@@ -492,188 +527,6 @@ export class BookingService {
     };
   }
 
-  /**
-   * Determine the most reliable reservation total using Cloudbeds priority order.
-   * Logs when no finite value can be derived, so downstream consumers know we're falling back later.
-   */
-  private calculateReservationTotals(
-    reservationDetails: any,
-    context?: { requestId: string; reservationId: string },
-  ): {
-    reservationTotal: number;
-    debug: Record<string, unknown>;
-  } {
-    const assignedRoomRates = reservationDetails?.assigned?.[0]?.dailyRates;
-    const reservationRoomRateTotal = Array.isArray(assignedRoomRates)
-      ? assignedRoomRates.reduce((sum: number, dr: any) => {
-        const rate = Number(dr?.rate ?? 0);
-        return sum + (Number.isFinite(rate) ? rate : 0);
-      }, 0)
-      : undefined;
-
-    const reservationTotalFromTotal = Number(reservationDetails?.total);
-    const reservationTotalFromGrandTotal = Number(
-      reservationDetails?.balanceDetailed?.grandTotal,
-    );
-    const reservationTotalFromRoomTotal = Number(
-      reservationDetails?.assigned?.[0]?.roomTotal,
-    );
-
-    const reservationTotal =
-      Number(reservationRoomRateTotal) > 0
-        ? Number(reservationRoomRateTotal)
-        : Number.isFinite(reservationTotalFromTotal)
-          ? reservationTotalFromTotal
-          : Number.isFinite(reservationTotalFromGrandTotal)
-            ? reservationTotalFromGrandTotal
-            : Number.isFinite(reservationTotalFromRoomTotal)
-              ? reservationTotalFromRoomTotal
-              : Number.NaN;
-
-    if (!Number.isFinite(reservationTotal)) {
-      this.logger.logWarn(
-        'Unable to derive reservation total from Cloudbeds reservation payload',
-        'BookingService',
-        'calculateReservationTotals',
-        context?.requestId ?? '',
-        {
-          reservationID: context?.reservationId,
-          reservationRoomRateTotal,
-          reservationTotalFromTotal,
-          reservationTotalFromGrandTotal,
-          reservationTotalFromRoomTotal,
-        },
-      );
-    }
-
-    return {
-      reservationTotal,
-      debug: {
-        reservationRoomRateTotal,
-        reservationTotalFromTotal,
-        reservationTotalFromGrandTotal,
-        reservationTotalFromRoomTotal,
-        reservationTotal,
-      },
-    };
-  }
-
-  private resolveAuthoritativeReservationFields(args: {
-    rateDetails: Record<string, any>;
-    reservationDetails: any;
-    fallbackStartDate: Date;
-    fallbackEndDate: Date;
-    monetarySnapshot: { reservationTotal: number };
-  }): {
-    startDate: Date;
-    endDate: Date;
-    currency: string;
-    totalAmount: number;
-    remainingBalance: number;
-    debug: Record<string, unknown>;
-  } {
-    const selectDate = (
-      candidates: { value?: string; source: string }[],
-      fallback: Date,
-      fallbackSource: string,
-    ): { date: Date; source: string } => {
-      for (const candidate of candidates) {
-        if (candidate.value) {
-          return { date: parseISO(String(candidate.value)), source: candidate.source };
-        }
-      }
-      return { date: fallback, source: fallbackSource };
-    };
-
-    const startSelection = selectDate(
-      [
-        { value: args.rateDetails?.reservationCheckIn, source: 'rateDetails.reservationCheckIn' },
-        {
-          value: args.rateDetails?.rooms?.[0]?.roomCheckIn,
-          source: 'rateDetails.rooms[0].roomCheckIn',
-        },
-      ],
-      args.fallbackStartDate,
-      'calculated.startDate',
-    );
-
-    const endSelection = selectDate(
-      [
-        { value: args.rateDetails?.reservationCheckOut, source: 'rateDetails.reservationCheckOut' },
-        {
-          value: args.rateDetails?.rooms?.[0]?.roomCheckOut,
-          source: 'rateDetails.rooms[0].roomCheckOut',
-        },
-      ],
-      args.fallbackEndDate,
-      'calculated.endDate',
-    );
-
-    const selectNumber = (
-      candidates: { value: number; source: string }[],
-      fallback: number,
-      fallbackSource: string,
-      defaultValue: number,
-    ): { value: number; source: string } => {
-      for (const candidate of candidates) {
-        if (Number.isFinite(candidate.value)) {
-          return candidate;
-        }
-      }
-      if (Number.isFinite(fallback)) {
-        return { value: fallback, source: fallbackSource };
-      }
-      return { value: defaultValue, source: 'default' };
-    };
-
-    const currency = String(
-      args.rateDetails?.propertyCurrency ??
-        args.reservationDetails?.propertyCurrency ??
-        args.reservationDetails?.currency ??
-        'USD',
-    ).trim() || 'USD';
-
-    const totalSelection = selectNumber(
-      [
-        { value: Number(args.rateDetails?.total), source: 'rateDetails.total' },
-      ],
-      args.monetarySnapshot.reservationTotal,
-      'calculated.reservationTotal',
-      Number(args.reservationDetails?.balance ?? 0),
-    );
-
-    const balanceSelection = selectNumber(
-      [
-        { value: Number(args.rateDetails?.balance), source: 'rateDetails.balance' },
-        {
-          value: Number(args.reservationDetails?.balanceDetailed?.grandTotal),
-          source: 'reservationDetails.balanceDetailed.grandTotal',
-        },
-      ],
-      Number(args.reservationDetails?.balance),
-      'reservationDetails.balance',
-      0,
-    );
-
-    return {
-      startDate: startSelection.date,
-      endDate: endSelection.date,
-      currency,
-      totalAmount: totalSelection.value,
-      remainingBalance: balanceSelection.value,
-      debug: {
-        selectedStartDateSource: startSelection.source,
-        selectedEndDateSource: endSelection.source,
-        selectedCurrency: currency,
-        selectedTotalSource: totalSelection.source,
-        selectedBalanceSource: balanceSelection.source,
-        startDate: startSelection.date,
-        endDate: endSelection.date,
-        totalAmount: totalSelection.value,
-        remainingBalance: balanceSelection.value,
-      },
-    };
-  }
 
   /**
    * Trigger payment workflow based on booking policy and conditions

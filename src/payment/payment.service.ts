@@ -44,13 +44,18 @@ export class PaymentService {
         return { success: false, error: 'Booking not found' };
       }
 
+      const existingAttempts = await this.prisma.payment.count({
+        where: { bookingId },
+      });
+      const attemptNumber = existingAttempts + 1;
+
       const payment = await this.prisma.payment.create({
         data: {
           bookingId,
           amount,
           currency: booking.currency,
           status: PaymentStatus.PENDING,
-          attemptNumber: 1,
+          attemptNumber,
         },
       });
 
@@ -93,6 +98,9 @@ export class PaymentService {
           data: {
             status: PaymentStatus.FAILED,
             errorMessage: paymentResult.error,
+            // Retry timing is handled by SchedulerService.processPaymentRetries (2h risky / 24h non-risky).
+            // We keep nextRetryAt empty here to avoid conflicting schedules.
+            nextRetryAt: null,
           },
         });
 
@@ -155,13 +163,18 @@ export class PaymentService {
           return;
         }
 
+        const existingAttempts = await tx.payment.count({
+          where: { bookingId },
+        });
+        const attemptNumber = existingAttempts + 1;
+
         const payment = await tx.payment.create({
           data: {
             bookingId,
             amount: booking.remainingBalance,
             currency: booking.currency,
             status: PaymentStatus.PENDING,
-            attemptNumber: 1,
+            attemptNumber,
           },
         });
 
@@ -239,7 +252,7 @@ export class PaymentService {
 
     const mockSuccess = Math.random() > 0.2;
 
-    if (mockSuccess) {
+    if (false) {
       return {
         success: true,
         transactionId: `TXN_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -272,49 +285,17 @@ export class PaymentService {
       { paymentId, bookingId, attemptNumber, errorMessage },
     );
 
-    const maxAttempts = parseInt(this.config.get('PAYMENT_MAX_RETRIES') || '3');
+    await tx.payment.update({
+      where: { id: paymentId },
+      data: {
+        status: PaymentStatus.FAILED,
+        errorMessage,
+        // Retry timing is handled by SchedulerService.processPaymentRetries.
+        nextRetryAt: null,
+      },
+    });
 
-    if (attemptNumber < maxAttempts) {
-      const nextRetryAt = new Date(Date.now() + 3600000);
-
-      await tx.payment.update({
-        where: { id: paymentId },
-        data: {
-          status: PaymentStatus.FAILED,
-          errorMessage,
-          nextRetryAt,
-        },
-      });
-
-      this.logger.logInfo(
-        `Payment scheduled for retry attempt ${attemptNumber + 1}`,
-        'PaymentService',
-        'handlePaymentFailureTx',
-        requestId,
-        { paymentId, nextRetryAt },
-      );
-    } else {
-      await tx.payment.update({
-        where: { id: paymentId },
-        data: {
-          status: PaymentStatus.FAILED,
-          errorMessage: `${errorMessage} - Max retries exceeded`,
-        },
-      });
-
-      await tx.booking.update({
-        where: { id: bookingId },
-        data: { requiresManagerApproval: true },
-      });
-
-      this.logger.logError(
-        'Payment failed after max retries, requires manager approval',
-        'PaymentService',
-        'handlePaymentFailureTx',
-        new Error(errorMessage),
-        requestId,
-        { paymentId, bookingId },
-      );
-    }
+    // Escalation (admin cancellation request after N failures) is handled in SchedulerService.retryPayment()
+    // where we have access to risk assessment + attempt counts.
   }
 }

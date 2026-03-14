@@ -29,6 +29,32 @@ export class CloudbedApiService {
     });
   }
 
+  async generatePaymentLink(
+    params: { reservationId: string; propertyId?: string },
+    requestId: string,
+  ): Promise<string> {
+    const { reservationId, propertyId } = params;
+
+    this.logger.logInfo(
+      'Generating payment link for reservation',
+      'CloudbedApiService',
+      'generatePaymentLink',
+      requestId,
+      { reservationId, propertyId },
+    );
+
+    // Cloudbeds payment-link endpoints vary by setup and permissions.
+    // To keep the workflow functional, we support a configurable template.
+    // Example: PAYMENT_LINK_TEMPLATE="https://pay.example.com/reservation/{reservationId}"
+    const template = this.config.get<string>('PAYMENT_LINK_TEMPLATE') || '';
+    if (template) {
+      return template.replace('{reservationId}', encodeURIComponent(reservationId));
+    }
+
+    // Fallback: return a placeholder link that can be replaced when a real endpoint is available.
+    return `${this.apiUrl}/reservation/${encodeURIComponent(reservationId)}/payment`;
+  }
+
   /**
    * Fetch rooms (optionally scoped to date range to retrieve unassigned rooms)
    */

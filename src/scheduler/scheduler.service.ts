@@ -5,8 +5,10 @@ import { LoggerService } from '../common/logger/logger.service';
 import { PaymentService } from '../payment/payment.service';
 import { EmailService } from '../email/email.service';
 import { RiskAssessmentService } from '../risk/risk-assessment.service';
-import { BookingStatus, BookingPolicyType, PaymentStatus, RiskLevel } from '@prisma/client';
-import { differenceInHours, isBefore, addHours } from 'date-fns';
+import { BookingStatus, BookingPolicyType, EmailStatus, EmailType, PaymentStatus, RiskLevel } from '@prisma/client';
+import { differenceInHours, isBefore, addHours, format } from 'date-fns';
+import { OccupancyService } from '../occupancy/occupancy.service';
+import { CloudbedApiService } from '../cloudbed/cloudbed-api.service';
 
 /**
  * Scheduler Service
@@ -22,6 +24,8 @@ export class SchedulerService {
     private readonly paymentService: PaymentService,
     private readonly emailService: EmailService,
     private readonly riskService: RiskAssessmentService,
+    private readonly occupancyService: OccupancyService,
+    private readonly cloudbedApi: CloudbedApiService,
   ) {}
 
   /**
@@ -442,11 +446,62 @@ export class SchedulerService {
           { bookingId: booking.id, reason: paymentResult.error },
         );
 
-        // Check if check-in is less than 48 hours
+        // If check-in is within 48 hours, follow the workflow diagram:
+        // - assess booking risk
+        // - generate Cloudbeds payment link
+        // - risky: send payment link immediately + notify support
+        // - not risky: notify support and retry later (scheduler handles 24h)
         const hoursUntilCheckIn = differenceInHours(booking.startDate, new Date());
         if (hoursUntilCheckIn < 48) {
-          // Escalate to risk flow
           await this.riskService.assessBookingRisk(booking.id, requestId);
+
+          const latestRisk = await this.prisma.riskAssessment.findFirst({
+            where: { bookingId: booking.id },
+            orderBy: { assessedAt: 'desc' },
+          });
+
+          const isRisky =
+            latestRisk?.riskLevel === RiskLevel.HIGH ||
+            latestRisk?.riskLevel === RiskLevel.CRITICAL;
+
+          try {
+            const paymentLink = await this.cloudbedApi.generatePaymentLink(
+              { reservationId: booking.reservationId, propertyId: booking.propertyId },
+              requestId,
+            );
+
+            if (isRisky && booking.guestEmail) {
+              await this.emailService.sendPaymentLink(
+                booking.id,
+                booking.guestEmail,
+                paymentLink,
+                requestId,
+              );
+            }
+
+            await this.emailService.sendSupportNotification(
+              booking.id,
+              {
+                guestEmail: booking.guestEmail || 'unknown',
+                guestName: undefined,
+                reservationId: booking.reservationId,
+                propertyName: booking.propertyName || 'Property',
+                startDate: booking.startDate,
+                riskLevel: latestRisk?.riskLevel ?? 'UNKNOWN',
+                totalAmount: booking.totalAmount.toNumber(),
+                currency: booking.currency,
+              },
+              requestId,
+            );
+          } catch (error) {
+            this.logger.logWarn(
+              'Failed to generate/send payment link/support notification',
+              'SchedulerService',
+              'initiatePaymentWorkflow',
+              requestId,
+              { bookingId: booking.id, error: String(error) },
+            );
+          }
         }
       }
     } catch (error) {
@@ -515,10 +570,11 @@ export class SchedulerService {
           where: { bookingId: booking.id },
         });
 
-        // Escalate to manager if max retries reached
-        if (paymentAttempts >= 2) {
-          await this.escalateToManager(booking, paymentAttempts, requestId);
-        }
+        await this.requestAdminCancellationIfThresholdReached(
+          booking.id,
+          paymentAttempts,
+          requestId,
+        );
       }
     } catch (error) {
       this.logger.logError(
@@ -535,61 +591,266 @@ export class SchedulerService {
   /**
    * Escalate failed payment to manager for approval
    */
-  private async escalateToManager(
-    booking: any,
-    paymentAttempts: number,
+  async requestAdminCancellationForBooking(
+    bookingId: string,
     requestId: string,
-  ): Promise<void> {
+    options?: { force?: boolean },
+  ): Promise<{ sent: boolean; recipients: string[]; reason?: string }> {
+    // This method sends an email asking admin/support staff to cancel the reservation in Cloudbeds.
+    // We intentionally do NOT auto-cancel reservations from this service.
+
     this.logger.logInfo(
-      'Escalating to manager for approval',
+      'Preparing admin cancellation request email',
       'SchedulerService',
-      'escalateToManager',
+      'requestAdminCancellationForBooking',
+      requestId,
+      { bookingId, force: Boolean(options?.force) },
+    );
+
+    const booking = await this.prisma.booking.findUnique({ where: { id: bookingId } });
+
+    if (!booking) {
+      this.logger.logWarn(
+        'Booking not found; cannot send admin cancellation request',
+        'SchedulerService',
+        'requestAdminCancellationForBooking',
+        requestId,
+        { bookingId },
+      );
+      return { sent: false, recipients: [], reason: 'Booking not found' };
+    }
+
+    // booking.startDate is captured from Cloudbeds reservationCheckIn (see BookingService.createBookingFromWebhook).
+    // We treat it as the check-in date for occupancy snapshot purposes.
+    const checkinDate = format(new Date(booking.startDate), 'yyyy-MM-dd');
+
+    this.logger.logInfo(
+      'Resolved check-in date for cancellation request flow',
+      'SchedulerService',
+      'requestAdminCancellationForBooking',
       requestId,
       {
-        bookingId: booking.id,
+        bookingId,
         reservationId: booking.reservationId,
-        paymentAttempts,
+        startDate: booking.startDate,
+        checkinDate,
       },
     );
 
-    try {
-      // Mark booking as requiring manager approval
-      await this.prisma.booking.update({
-        where: { id: booking.id },
-        data: { requiresManagerApproval: true },
-      });
+    const alreadySent = await this.prisma.email.findFirst({
+      where: {
+        bookingId,
+        emailType: EmailType.ADMIN_CANCELLATION_REQUEST,
+        status: { in: [EmailStatus.PENDING, EmailStatus.SENT] },
+      },
+      select: { id: true },
+    });
 
-      // Send manager approval request email
-      await this.emailService.sendManagerApprovalRequest(
-        booking.id,
-        {
-          reservationId: booking.reservationId,
-          guestEmail: booking.guestEmail || 'unknown',
-          propertyName: booking.propertyName || 'Property',
-          startDate: booking.startDate,
-          totalAmount: booking.totalAmount.toNumber(),
-          currency: booking.currency,
-          paymentAttempts,
-        },
+    if (alreadySent && !options?.force) {
+      this.logger.logInfo(
+        'Admin cancellation request already sent; skipping',
+        'SchedulerService',
+        'requestAdminCancellationForBooking',
         requestId,
+        { bookingId, alreadySentEmailId: alreadySent.id },
       );
+      return { sent: false, recipients: [], reason: 'Already requested' };
+    }
+
+    const settings = await this.getPropertyNotificationSetting(booking.propertyId);
+    const recipients = this.mergeRecipients(settings?.adminEmails, settings?.supportEmails);
+
+    this.logger.logInfo(
+      'Resolved admin/support recipients for cancellation request',
+      'SchedulerService',
+      'requestAdminCancellationForBooking',
+      requestId,
+      {
+        bookingId,
+        propertyId: booking.propertyId,
+        recipientsCount: recipients.length,
+        recipients,
+        configuredThreshold: settings?.cancelRequestAfterFailures ?? null,
+      },
+    );
+
+    if (recipients.length === 0) {
+      this.logger.logWarn(
+        'No admin/support recipients configured; skipping admin cancellation request email',
+        'SchedulerService',
+        'requestAdminCancellationForBooking',
+        requestId,
+        { bookingId, propertyId: booking.propertyId },
+      );
+      return { sent: false, recipients: [], reason: 'No recipients configured' };
+    }
+
+    const paymentAttempts = await this.prisma.payment.count({ where: { bookingId } });
+
+    this.logger.logInfo(
+      'Loaded payment attempts for cancellation request email',
+      'SchedulerService',
+      'requestAdminCancellationForBooking',
+      requestId,
+      { bookingId, paymentAttempts },
+    );
+
+    let occupancyTotals:
+      | {
+          occupancyRate: number;
+          occupiedRooms: number;
+          totalRooms: number;
+          blockedRooms: number;
+        }
+      | undefined;
+
+    try {
+      const occupancy = await this.occupancyService.getDailyOccupancy({
+        propertyId: booking.propertyId,
+        date: checkinDate,
+        requestId,
+      });
+      occupancyTotals = {
+        occupancyRate: occupancy?.totals?.occupancyRate ?? 0,
+        occupiedRooms: occupancy?.totals?.occupiedRooms ?? 0,
+        totalRooms: occupancy?.totals?.totalRooms ?? 0,
+        blockedRooms: occupancy?.totals?.blockedRooms ?? 0,
+      };
 
       this.logger.logInfo(
-        'Successfully escalated to manager',
+        'Fetched occupancy snapshot for cancellation request email',
         'SchedulerService',
-        'escalateToManager',
+        'requestAdminCancellationForBooking',
         requestId,
-        { bookingId: booking.id },
+        { bookingId, propertyId: booking.propertyId, checkinDate },
+        occupancyTotals,
       );
     } catch (error) {
-      this.logger.logError(
-        'Failed to escalate to manager',
+      this.logger.logWarn(
+        'Failed to load occupancy for cancellation request email; continuing without it',
         'SchedulerService',
-        'escalateToManager',
-        error,
+        'requestAdminCancellationForBooking',
         requestId,
-        { bookingId: booking.id },
+        { bookingId, error: String(error) },
       );
     }
+
+    await this.prisma.booking.update({
+      where: { id: bookingId },
+      data: { requiresManagerApproval: true },
+    });
+
+    await this.emailService.sendAdminCancellationRequest(
+      bookingId,
+      recipients,
+      {
+        reservationId: booking.reservationId,
+        guestEmail: booking.guestEmail || 'unknown',
+        propertyName: booking.propertyName || 'Property',
+        startDate: booking.startDate,
+        totalAmount: booking.totalAmount.toNumber(),
+        currency: booking.currency,
+        paymentAttempts,
+        occupancy: occupancyTotals,
+      },
+      requestId,
+    );
+
+    this.logger.logInfo(
+      'Admin cancellation request email sent',
+      'SchedulerService',
+      'requestAdminCancellationForBooking',
+      requestId,
+      {
+        bookingId,
+        reservationId: booking.reservationId,
+        propertyId: booking.propertyId,
+        recipientsCount: recipients.length,
+      },
+    );
+
+    return { sent: true, recipients };
+  }
+
+  async findBookingForAdminCancellation(params: {
+    bookingId?: string;
+    reservationId?: string;
+  }): Promise<{ id: string } | null> {
+    if (params.bookingId) {
+      return this.prisma.booking.findUnique({
+        where: { id: params.bookingId },
+        select: { id: true },
+      });
+    }
+
+    if (params.reservationId) {
+      return this.prisma.booking.findUnique({
+        where: { reservationId: params.reservationId },
+        select: { id: true },
+      });
+    }
+
+    return null;
+  }
+
+  private async requestAdminCancellationIfThresholdReached(
+    bookingId: string,
+    paymentAttempts: number,
+    requestId: string,
+  ): Promise<void> {
+    const booking = await this.prisma.booking.findUnique({ where: { id: bookingId } });
+    if (!booking) return;
+
+    const settings = await this.getPropertyNotificationSetting(booking.propertyId);
+    const threshold = settings?.cancelRequestAfterFailures ?? 2;
+
+    this.logger.logInfo(
+      'Evaluating admin cancellation request threshold',
+      'SchedulerService',
+      'requestAdminCancellationIfThresholdReached',
+      requestId,
+      {
+        bookingId,
+        reservationId: booking.reservationId,
+        propertyId: booking.propertyId,
+        paymentAttempts,
+        threshold,
+      },
+    );
+
+    if (paymentAttempts < threshold) {
+      this.logger.logInfo(
+        'Cancellation request threshold not reached; skipping',
+        'SchedulerService',
+        'requestAdminCancellationIfThresholdReached',
+        requestId,
+        { bookingId, paymentAttempts, threshold },
+      );
+      return;
+    }
+
+    await this.requestAdminCancellationForBooking(bookingId, requestId);
+  }
+
+  private mergeRecipients(adminEmails?: string[] | null, supportEmails?: string[] | null): string[] {
+    return Array.from(
+      new Set(
+        [...(adminEmails ?? []), ...(supportEmails ?? [])]
+          .map((e) => String(e || '').trim())
+          .filter(Boolean),
+      ),
+    );
+  }
+
+  private async getPropertyNotificationSetting(propertyId: string) {
+    const propertySetting = await this.prisma.propertyNotificationSetting.findUnique({
+      where: { propertyId },
+    });
+
+    if (propertySetting) return propertySetting;
+
+    return this.prisma.propertyNotificationSetting.findFirst({
+      where: { propertyId: null },
+    });
   }
 }

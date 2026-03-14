@@ -73,7 +73,7 @@ export class RiskAssessmentService {
         this.config.get('HIGH_RISK_ROOM_THRESHOLD') ??
         '2';
 
-      const hasMultipleGuests = roomCount > parseInt(roomThresholdRaw);
+      const hasMultipleRooms = roomCount > parseInt(roomThresholdRaw);
 
       this.logger.logInfo(
         'Risk factors calculated',
@@ -87,7 +87,7 @@ export class RiskAssessmentService {
           isNextDayCheckIn,
           roomCount,
           roomThreshold: parseInt(roomThresholdRaw),
-          hasMultipleRooms: hasMultipleGuests,
+          hasMultipleRooms: hasMultipleRooms,
           totalAmount,
           remainingBalance,
         },
@@ -116,7 +116,7 @@ export class RiskAssessmentService {
         );
       }
 
-      if (hasMultipleGuests) {
+      if (hasMultipleRooms) {
         riskScore += 20;
         this.logger.logInfo(
           'Applied multiple room risk score',
@@ -202,7 +202,7 @@ export class RiskAssessmentService {
           isSameDayCheckIn,
           isNextDayCheckIn,
           hoursUntilCheckIn,
-          hasMultipleGuests,
+          hasMultipleRooms,
           requiresImmediatePayment,
           priorityForCancellation,
           assessmentData: {
@@ -210,12 +210,12 @@ export class RiskAssessmentService {
               sameDayCheckIn: isSameDayCheckIn,
               nextDayCheckIn: isNextDayCheckIn,
               roomCount,
-              multipleRooms: hasMultipleGuests,
+              multipleRooms: hasMultipleRooms,
               highValue: totalAmount > 500,
             },
             scores: {
               timingScore: isSameDayCheckIn ? 50 : isNextDayCheckIn ? 30 : 0,
-              roomScore: hasMultipleGuests ? 20 : 0,
+              roomScore: hasMultipleRooms ? 20 : 0,
               valueScore: totalAmount > 500 ? 10 : 0,
               totalScore: riskScore,
             },

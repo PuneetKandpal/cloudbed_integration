@@ -52,6 +52,7 @@ enum EmailType {
   CANCELLATION_CONFIRMATION
   MANAGER_APPROVAL_REQUEST
   SUPPORT_NOTIFICATION
+  ADMIN_CANCELLATION_REQUEST
 }
 
 // Email status
@@ -157,6 +158,18 @@ model Guest {
   @@index([propertyId])
 }
 
+model PropertyNotificationSetting {
+  id                         String   @id @default(uuid())
+  propertyId                  String?  @unique
+  adminEmails                 String[] @db.Text
+  supportEmails               String[] @db.Text
+  cancelRequestAfterFailures  Int      @default(2)
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+
+  @@index([propertyId])
+}
+
 // Payment entity - tracks all payment attempts and transactions
 model Payment {
   id                String              @id @default(uuid())
@@ -208,7 +221,7 @@ model RiskAssessment {
   isSameDayCheckIn      Boolean             @default(false)
   isNextDayCheckIn      Boolean             @default(false)
   hoursUntilCheckIn     Int?
-  hasMultipleGuests     Boolean             @default(false)
+  hasMultipleRooms     Boolean             @default(false)
   hasPaymentHistory     Boolean             @default(false)
   hasFailedPayments     Boolean             @default(false)
   

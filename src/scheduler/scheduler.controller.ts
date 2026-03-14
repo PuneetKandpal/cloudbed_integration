@@ -1,4 +1,4 @@
-import { Controller, Post, Headers, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Headers, HttpCode, HttpStatus, Body } from '@nestjs/common';
 import { SchedulerService } from './scheduler.service';
 
 @Controller('scheduler')
@@ -31,5 +31,31 @@ export class SchedulerController {
   async runSendReminders(@Headers('x-request-id') requestId?: string) {
     await this.schedulerService.sendPaymentReminders();
     return { ok: true, requestId: requestId ?? null, job: 'sendPaymentReminders' };
+  }
+
+  @Post('run/request-admin-cancellation')
+  @HttpCode(HttpStatus.ACCEPTED)
+  async runRequestAdminCancellation(
+    @Body() body: { bookingId?: string; reservationId?: string; force?: boolean },
+    @Headers('x-request-id') requestId?: string,
+  ) {
+    const resolvedRequestId = requestId ?? `manual-admin-cancel-${Date.now()}`;
+
+    const booking = await this.schedulerService.findBookingForAdminCancellation({
+      bookingId: body?.bookingId,
+      reservationId: body?.reservationId,
+    });
+
+    if (!booking) {
+      return { ok: false, requestId: resolvedRequestId, error: 'bookingId or reservationId not found' };
+    }
+
+    const result = await this.schedulerService.requestAdminCancellationForBooking(
+      booking.id,
+      resolvedRequestId,
+      { force: Boolean(body?.force) },
+    );
+
+    return { ok: true, requestId: resolvedRequestId, job: 'requestAdminCancellationForBooking', result };
   }
 }
