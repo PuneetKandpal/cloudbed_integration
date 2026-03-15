@@ -10,6 +10,7 @@ function getHumanDelayConfig(): {
   observeMs: number;
   reservationsBeforeTypeMs: number;
   creditCardsWaitMs: number;
+  postReservationsWaitMs: number;
 } {
   const baseMs = Number.parseInt(process.env.CLOUDBEDS_HUMAN_DELAY_MS ?? '800', 10);
   const jitterMs = Number.parseInt(process.env.CLOUDBEDS_HUMAN_JITTER_MS ?? '400', 10);
@@ -19,6 +20,10 @@ function getHumanDelayConfig(): {
     10,
   );
   const creditCardsWaitMs = Number.parseInt(process.env.CLOUDBEDS_CREDIT_CARDS_WAIT_MS ?? '0', 10);
+  const postReservationsWaitMs = Number.parseInt(
+    process.env.CLOUDBEDS_POST_RESERVATIONS_WAIT_MS ?? `${5 * 60 * 1000}`,
+    10,
+  );
 
   return {
     baseMs: Number.isFinite(baseMs) ? baseMs : 800,
@@ -28,6 +33,9 @@ function getHumanDelayConfig(): {
       ? reservationsBeforeTypeMs
       : 0,
     creditCardsWaitMs: Number.isFinite(creditCardsWaitMs) ? creditCardsWaitMs : 0,
+    postReservationsWaitMs: Number.isFinite(postReservationsWaitMs)
+      ? postReservationsWaitMs
+      : 5 * 60 * 1000,
   };
 }
 
@@ -128,6 +136,18 @@ async function openCreditCardsTab(page: Page, requestId: string): Promise<void> 
   logger.logInfo('Credit Cards tab opened', 'CloudbedsReservationsFlow', 'openCreditCardsTab', requestId, {
     currentUrl: page.url(),
   });
+}
+
+async function waitAfterReservationsFlow(page: Page, requestId: string): Promise<void> {
+  const { postReservationsWaitMs } = getHumanDelayConfig();
+  if (!postReservationsWaitMs || postReservationsWaitMs <= 0) return;
+
+  logger.logInfo('Waiting after reservations flow for manual observation', 'CloudbedsReservationsFlow', 'waitAfterReservationsFlow', requestId, {
+    postReservationsWaitMs,
+    currentUrl: page.url(),
+  });
+
+  await page.waitForTimeout(postReservationsWaitMs);
 }
 
 export async function openSideDrawerIfNeeded(page: Page, requestId: string): Promise<void> {
@@ -311,6 +331,8 @@ export async function goToReservationsAndSearch(page: Page, propertyId: string, 
   await clickReservationNameFromResults(page, requestId, reservationId);
 
   await openCreditCardsTab(page, requestId);
+
+  await waitAfterReservationsFlow(page, requestId);
 
   logger.logInfo('Completed dashboard-to-reservations search flow', 'CloudbedsReservationsFlow', 'goToReservationsAndSearch', requestId, {
     finalUrl: page.url(),
