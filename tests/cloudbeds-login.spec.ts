@@ -71,7 +71,9 @@ test.describe('Cloudbeds login', () => {
     await signInPage.enterTotp(totpCode);
     logger.logInfo('Submitted TOTP code', 'CloudbedsLoginSpec', 'logs in with password and Google Authenticator', requestId);
 
-    await page.waitForURL(/cloudbeds\.com|myfrontdesk\.cloudbeds\.com|auth\.cloudbeds\.com/, {
+    // After TOTP, Cloudbeds often completes an OAuth redirect chain before you land on the app.
+    // If we start our own navigation too early, Playwright can abort the in-flight redirect.
+    await page.waitForURL(/hotels\.cloudbeds\.com\/connect\//, {
       timeout: 120000,
     });
 
