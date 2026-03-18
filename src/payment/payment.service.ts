@@ -12,10 +12,137 @@ import { ConfigService } from '@nestjs/config';
 export class PaymentService {
   private readonly logger = new LoggerService('PaymentService');
 
+  private readonly paymentGatewayConfig: {
+    loginUrl: string;
+    chargeUrl: string;
+    username: string;
+    password: string;
+  };
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
-  ) {}
+  ) {
+    this.paymentGatewayConfig = {
+      loginUrl: this.config.get<string>('PAYMENT_GATEWAY_LOGIN_URL') || '',
+      chargeUrl: this.config.get<string>('PAYMENT_GATEWAY_CHARGE_URL') || '',
+      username: this.config.get<string>('PAYMENT_GATEWAY_USERNAME') || '',
+      password: this.config.get<string>('PAYMENT_GATEWAY_PASSWORD') || '',
+    };
+  }
+
+  private resolveAutomationMode(): 'worker' | 'mock' {
+    const mode = (this.config.get<string>('PAYMENT_AUTOMATION_MODE') || '').toLowerCase().trim();
+    if (mode === 'worker') return 'worker';
+    return 'mock';
+  }
+
+  private async enqueueChargeTask(params: {
+    paymentId: string;
+    bookingId: string;
+    reservationId: string;
+    propertyId: string;
+    amount: number;
+    currency: string;
+    requestId: string;
+  }): Promise<{ taskId: string }> {
+    const scheduledFor = new Date();
+
+    const task = await this.prisma.scheduledTask.create({
+      data: {
+        taskType: 'PAYMENT_CHARGE',
+        taskData: {
+          paymentId: params.paymentId,
+          bookingId: params.bookingId,
+          reservationId: params.reservationId,
+          propertyId: params.propertyId,
+          amount: params.amount,
+          currency: params.currency,
+          requestId: params.requestId,
+        },
+        scheduledFor,
+        status: 'PENDING',
+      },
+      select: { id: true },
+    });
+
+    this.logger.logInfo(
+      'Enqueued payment charge task for worker',
+      'PaymentService',
+      'enqueueChargeTask',
+      params.requestId,
+      {
+        taskId: task.id,
+        paymentId: params.paymentId,
+        bookingId: params.bookingId,
+        reservationId: params.reservationId,
+        propertyId: params.propertyId,
+        amount: params.amount,
+        currency: params.currency,
+      },
+    );
+
+    return { taskId: task.id };
+  }
+
+  private async waitForChargeTaskResult(params: {
+    taskId: string;
+    paymentId: string;
+    requestId: string;
+  }): Promise<{ success: boolean; transactionId?: string; error?: string }> {
+    const timeoutMs = Number.parseInt(
+      this.config.get<string>('PAYMENT_SERVER_WAIT_TIMEOUT_MS') ?? `${10 * 60 * 1000}`,
+      10,
+    );
+    const pollIntervalMs = Number.parseInt(
+      this.config.get<string>('PAYMENT_SERVER_POLL_INTERVAL_MS') ?? '2000',
+      10,
+    );
+
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < timeoutMs) {
+      const task = await this.prisma.scheduledTask.findUnique({
+        where: { id: params.taskId },
+        select: { status: true, errorMessage: true, completedAt: true },
+      });
+
+      if (!task) {
+        return { success: false, error: 'Charge task not found' };
+      }
+
+      if (task.status === 'COMPLETED' || task.status === 'FAILED') {
+        const payment = await this.prisma.payment.findUnique({
+          where: { id: params.paymentId },
+          select: { status: true, transactionId: true, errorMessage: true },
+        });
+
+        if (payment?.status === PaymentStatus.CAPTURED) {
+          return { success: true, transactionId: payment.transactionId ?? undefined };
+        }
+
+        return {
+          success: false,
+          error: payment?.errorMessage ?? task.errorMessage ?? 'Payment charge failed',
+        };
+      }
+
+      await new Promise((r) => setTimeout(r, Math.max(200, pollIntervalMs)));
+    }
+
+    this.logger.logWarn(
+      'Timed out waiting for worker to finish payment charge',
+      'PaymentService',
+      'waitForChargeTaskResult',
+      params.requestId,
+      { taskId: params.taskId, paymentId: params.paymentId, timeoutMs },
+    );
+
+    return {
+      success: false,
+      error: `Timed out waiting for worker after ${timeoutMs}ms`,
+    };
+  }
 
   /**
    * Authorize payment for a booking
@@ -36,6 +163,8 @@ export class PaymentService {
     );
 
     try {
+      const automationMode = this.resolveAutomationMode();
+
       const booking = await this.prisma.booking.findUnique({
         where: { id: bookingId },
       });
@@ -62,8 +191,19 @@ export class PaymentService {
       const paymentResult = await this.authorizeAndCharge(
         payment.id,
         amount,
+        {
+          bookingId: booking.id,
+          reservationId: booking.reservationId,
+          propertyId: booking.propertyId,
+          guestEmail: booking.guestEmail ?? undefined,
+          currency: booking.currency,
+        },
         requestId,
       );
+
+      if (automationMode === 'worker') {
+        return paymentResult;
+      }
 
       if (paymentResult.success) {
         await this.prisma.payment.update({
@@ -141,6 +281,61 @@ export class PaymentService {
     );
 
     try {
+      const automationMode = this.resolveAutomationMode();
+
+      if (automationMode === 'worker') {
+        const booking = await this.prisma.booking.findUnique({
+          where: { id: bookingId },
+        });
+
+        if (!booking) {
+          throw new Error('Booking not found');
+        }
+
+        const remainingBalance = booking.remainingBalance.toNumber();
+
+        if (remainingBalance <= 0) {
+          this.logger.logInfo(
+            'No outstanding balance, skipping payment',
+            'PaymentService',
+            'processPayment',
+            requestId,
+            { bookingId },
+          );
+          return;
+        }
+
+        const existingAttempts = await this.prisma.payment.count({
+          where: { bookingId },
+        });
+        const attemptNumber = existingAttempts + 1;
+
+        const payment = await this.prisma.payment.create({
+          data: {
+            bookingId,
+            amount: booking.remainingBalance,
+            currency: booking.currency,
+            status: PaymentStatus.PENDING,
+            attemptNumber,
+          },
+        });
+
+        await this.authorizeAndCharge(
+          payment.id,
+          remainingBalance,
+          {
+            bookingId: booking.id,
+            reservationId: booking.reservationId,
+            propertyId: booking.propertyId,
+            guestEmail: booking.guestEmail ?? undefined,
+            currency: booking.currency,
+          },
+          requestId,
+        );
+
+        return;
+      }
+
       await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         const booking = await tx.booking.findUnique({
           where: { id: bookingId },
@@ -181,6 +376,13 @@ export class PaymentService {
         const paymentResult = await this.authorizeAndCharge(
           payment.id,
           remainingBalance,
+          {
+            bookingId: booking.id,
+            reservationId: booking.reservationId,
+            propertyId: booking.propertyId,
+            guestEmail: booking.guestEmail ?? undefined,
+            currency: booking.currency,
+          },
           requestId,
         );
 
@@ -240,6 +442,13 @@ export class PaymentService {
   private async authorizeAndCharge(
     paymentId: string,
     amount: number,
+    context: {
+      bookingId: string;
+      reservationId: string;
+      propertyId: string;
+      guestEmail?: string;
+      currency: string;
+    },
     requestId: string,
   ): Promise<{ success: boolean; transactionId?: string; error?: string }> {
     this.logger.logInfo(
@@ -247,22 +456,50 @@ export class PaymentService {
       'PaymentService',
       'authorizeAndCharge',
       requestId,
-      { paymentId, amount },
+      {
+        paymentId,
+        amount,
+        bookingId: context.bookingId,
+        reservationId: context.reservationId,
+        propertyId: context.propertyId,
+        guestEmail: context.guestEmail,
+        currency: context.currency,
+      },
     );
+
+    const automationMode = this.resolveAutomationMode();
+
+    if (automationMode === 'worker') {
+      const { taskId } = await this.enqueueChargeTask({
+        paymentId,
+        bookingId: context.bookingId,
+        reservationId: context.reservationId,
+        propertyId: context.propertyId,
+        amount,
+        currency: context.currency,
+        requestId,
+      });
+
+      return await this.waitForChargeTaskResult({
+        taskId,
+        paymentId,
+        requestId,
+      });
+    }
 
     const mockSuccess = Math.random() > 0.2;
 
-    if (false) {
+    if (mockSuccess) {
       return {
         success: true,
         transactionId: `TXN_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       };
-    } else {
-      return {
-        success: false,
-        error: 'Card declined - insufficient funds',
-      };
     }
+
+    return {
+      success: false,
+      error: 'Card declined - insufficient funds',
+    };
   }
 
   /**
