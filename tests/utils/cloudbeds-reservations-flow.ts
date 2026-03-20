@@ -290,6 +290,14 @@ async function authorizeCreditCardInModal(page: Page, requestId: string, amount:
     page.getByText(/success!/i).first().waitFor({ state: 'visible', timeout: 60000 }).catch(() => undefined),
   ]);
 
+  const captureButton = page.locator('[data-hook="capture-card"]').first();
+  const voidButton = page.locator('[data-hook="void-card"]').first();
+
+  await expect(captureButton).toBeVisible({ timeout: 60000 });
+  await expect(voidButton).toBeVisible({ timeout: 60000 });
+
+  logger.logInfo('Capture and Void buttons are visible after authorization', 'CloudbedsReservationsFlow', 'authorizeCreditCardInModal', requestId);
+
   logger.logInfo(
     'Clicked Authorize in modal (authorization submitted)',
     'CloudbedsReservationsFlow',
