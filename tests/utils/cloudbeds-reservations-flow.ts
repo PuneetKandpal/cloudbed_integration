@@ -298,6 +298,8 @@ async function authorizeCreditCardInModal(page: Page, requestId: string, amount:
 
   logger.logInfo('Capture and Void buttons are visible after authorization', 'CloudbedsReservationsFlow', 'authorizeCreditCardInModal', requestId);
 
+  await clickCaptureButtonAndReadModal(page, requestId);
+
   logger.logInfo(
     'Clicked Authorize in modal (authorization submitted)',
     'CloudbedsReservationsFlow',
@@ -307,6 +309,54 @@ async function authorizeCreditCardInModal(page: Page, requestId: string, amount:
       amount,
     },
   );
+}
+
+async function clickCaptureButtonAndReadModal(page: Page, requestId: string): Promise<void> {
+  const captureButton = page.locator('[data-hook="capture-card"]').first();
+
+  await humanDelay(page, requestId, 'before-click-capture-button');
+  await captureButton.click();
+
+  logger.logInfo('Clicked Capture button, waiting for modal', 'CloudbedsReservationsFlow', 'clickCaptureButtonAndReadModal', requestId);
+
+  const captureModal = page.locator('.modal-content').filter({ hasText: /capture/i }).first();
+  await captureModal.waitFor({ state: 'visible', timeout: 60000 });
+
+  const amountInput = captureModal
+    .locator('input[data-hook="capture-amount"]')
+    .or(captureModal.locator('input[name="amount"]'))
+    .or(captureModal.getByRole('textbox').first())
+    .first();
+
+  await expect(amountInput).toBeVisible({ timeout: 60000 });
+
+  const inputValue = await amountInput.inputValue();
+  logger.logInfo(
+    'Capture modal input value read',
+    'CloudbedsReservationsFlow',
+    'clickCaptureButtonAndReadModal',
+    requestId,
+    {
+      captureAmount: inputValue,
+    },
+  );
+
+  const cancelButton = captureModal
+    .locator('[data-hook="capture-cancel"]')
+    .or(captureModal.getByRole('link', { name: /cancel/i }))
+    .or(captureModal.getByText(/cancel/i).first())
+    .first();
+
+  await expect(cancelButton).toBeVisible({ timeout: 60000 });
+  await humanDelay(page, requestId, 'before-click-capture-cancel');
+  await cancelButton.click();
+
+  await Promise.race([
+    captureModal.waitFor({ state: 'hidden', timeout: 60000 }).catch(() => undefined),
+    captureModal.waitFor({ state: 'detached', timeout: 60000 }).catch(() => undefined),
+  ]);
+
+  logger.logInfo('Clicked Cancel in Capture modal', 'CloudbedsReservationsFlow', 'clickCaptureButtonAndReadModal', requestId);
 }
 
 async function waitAfterReservationsFlow(page: Page, requestId: string): Promise<void> {
