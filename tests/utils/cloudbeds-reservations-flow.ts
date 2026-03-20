@@ -481,6 +481,7 @@ export async function goToReservationsAndSearch(page: Page, propertyId: string, 
 
   await openCreditCardsTab(page, requestId);
   await clickAuthorizeButtonOnSelectedCard(page, requestId);
+  await authorizeCreditCardInModal(page, requestId, '10');
 
   await waitAfterReservationsFlow(page, requestId);
 
