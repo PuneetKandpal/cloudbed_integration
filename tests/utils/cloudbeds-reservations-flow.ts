@@ -232,8 +232,6 @@ async function clickAuthorizeButtonOnSelectedCard(page: Page, requestId: string)
   await humanDelay(page, requestId, 'before-click-authorize-button');
   await authorizeControl.click();
   await observePause(page, requestId, 'after-click-authorize-button');
-  logger.logInfo('Waiting 10s after clicking Authorize to observe modal/UI state', 'CloudbedsReservationsFlow', 'clickAuthorizeButtonOnSelectedCard', requestId);
-  await page.waitForTimeout(10_000);
 
   logger.logInfo('Clicked Authorize button for selected credit card', 'CloudbedsReservationsFlow', 'clickAuthorizeButtonOnSelectedCard', requestId, {
     buttonText,
@@ -241,16 +239,21 @@ async function clickAuthorizeButtonOnSelectedCard(page: Page, requestId: string)
 }
 
 async function authorizeCreditCardInModal(page: Page, requestId: string, amount: string): Promise<void> {
-  const modalContent = page.locator('.modal-content').first();
-  const modalHeader = modalContent.locator('[data-hook="modal-header"]').first();
-  const title = modalHeader
-    .locator('h4.modal-title.bold')
-    .or(modalHeader.locator('h4.modal-title'))
-    .or(modalHeader.getByRole('heading', { name: /authorize credit card/i }));
+  const modalContentCandidate = page.locator('.modal-content').filter({ hasText: /authorize credit card/i });
+  const modalContent =
+    (await modalContentCandidate.count().catch(() => 0)) > 0
+      ? modalContentCandidate.first()
+      : page.locator('#card-details').filter({ hasText: /authorize credit card/i }).first();
 
   await modalContent.waitFor({ state: 'visible', timeout: 60000 });
-  await expect(title).toBeVisible({ timeout: 60000 });
-  await expect(title).toHaveText(/authorize credit card/i, { timeout: 60000 });
+
+  const boldTitle = modalContent.locator('h4.modal-title.bold').filter({ hasText: /authorize credit card/i });
+  const modalTitle =
+    (await boldTitle.count().catch(() => 0)) > 0
+      ? boldTitle.first()
+      : modalContent.getByRole('heading', { name: /authorize credit card/i }).first();
+
+  await expect(modalTitle).toBeVisible({ timeout: 60000 });
 
   logger.logInfo(
     'Authorize Credit Card modal is visible and title validated',
@@ -259,21 +262,29 @@ async function authorizeCreditCardInModal(page: Page, requestId: string, amount:
     requestId,
   );
 
-  const amountInput = modalContent.locator('input[data-hook="auth-credit-card-amount"]').first();
+  const amountInput = modalContent
+    .locator('input[data-hook="auth-credit-card-amount"]')
+    .or(modalContent.locator('input[name="amount"]'))
+    .or(modalContent.getByRole('textbox').first())
+    .first();
   await expect(amountInput).toBeVisible({ timeout: 60000 });
 
   await humanDelay(page, requestId, 'before-fill-auth-amount');
   await amountInput.fill(amount);
 
-  const confirmButton = modalContent.locator('[data-hook="auth-credit-card-confirm"]').first();
-  await expect(confirmButton).toBeVisible({ timeout: 60000 });
+  const authorizeButton = modalContent
+    .locator('[data-hook="auth-credit-card-confirm"]')
+    .or(modalContent.getByRole('button', { name: /^Authorize$/ }).first())
+    .first();
+  await expect(authorizeButton).toBeVisible({ timeout: 60000 });
 
   await humanDelay(page, requestId, 'before-click-auth-confirm');
-  await confirmButton.click();
+  await authorizeButton.click();
 
   await Promise.race([
     modalContent.waitFor({ state: 'hidden', timeout: 60000 }).catch(() => undefined),
     modalContent.waitFor({ state: 'detached', timeout: 60000 }).catch(() => undefined),
+    page.getByText(/success!/i).first().waitFor({ state: 'visible', timeout: 60000 }).catch(() => undefined),
   ]);
 
   logger.logInfo(
