@@ -281,6 +281,9 @@ async function authorizeCreditCardInModal(page: Page, requestId: string, amount:
   await humanDelay(page, requestId, 'before-click-auth-confirm');
   await authorizeButton.click();
 
+  logger.logInfo('Waiting 10s after clicking Authorize in modal to observe UI state', 'CloudbedsReservationsFlow', 'authorizeCreditCardInModal', requestId);
+  await page.waitForTimeout(10_000);
+
   await Promise.race([
     modalContent.waitFor({ state: 'hidden', timeout: 60000 }).catch(() => undefined),
     modalContent.waitFor({ state: 'detached', timeout: 60000 }).catch(() => undefined),
