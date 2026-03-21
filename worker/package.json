@@ -1,0 +1,28 @@
+{
+  "name": "cloudbed-charge-worker",
+  "version": "1.0.0",
+  "description": "Independent worker for processing Cloudbed payment charges via browser automation",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node --watch dist/index.js",
+    "playwright:install": "playwright install chromium",
+    "playwright:test": "playwright test",
+    "playwright:cloudbeds-login": "playwright test tests/cloudbeds-login.spec.ts --project=chromium --headed"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "@prisma/client": "^5.8.1",
+    "node-cron": "^3.0.3",
+    "dotenv": "^16.4.5",
+    "@playwright/test": "^1.58.2",
+    "otpauth": "^9.3.6"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.7",
+    "@types/node-cron": "^3.0.11",
+    "typescript": "^5.7.3"
+  }
+}
