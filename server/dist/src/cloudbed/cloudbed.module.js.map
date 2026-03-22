@@ -1,0 +1,1 @@
+{"version":3,"file":"cloudbed.module.js","sourceRoot":"","sources":["../../../src/cloudbed/cloudbed.module.ts"],"names":[],"mappings":";;;;;;;;;AAAA,2CAAwC;AACxC,iEAA4D;AAMrD,IAAM,cAAc,GAApB,MAAM,cAAc;CAAG,CAAA;AAAjB,wCAAc;yBAAd,cAAc;IAJ1B,IAAA,eAAM,EAAC;QACN,SAAS,EAAE,CAAC,yCAAkB,CAAC;QAC/B,OAAO,EAAE,CAAC,yCAAkB,CAAC;KAC9B,CAAC;GACW,cAAc,CAAG"}
