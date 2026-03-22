@@ -63,3 +63,13 @@ node_modules/
 /playwright/.cache/
 /playwright/.auth/
 /.auth/
+
+# Worker app artifacts
+/worker/dist/
+/worker/node_modules/
+/worker/.auth/
+/worker/playwright-report/
+/worker/test-results/
+/worker/blob-report/
+/worker/.env
+/worker/logs/
