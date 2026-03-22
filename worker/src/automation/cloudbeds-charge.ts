@@ -169,6 +169,20 @@ async function observePause(page: Page, requestId: string, reason: string): Prom
   await page.waitForTimeout(observeMs);
 }
 
+function formatAmountForComparison(value: string): number {
+  const normalized = value
+    .replace(/,/g, '')
+    .replace(/[^0-9.\-]/g, '')
+    .trim();
+
+  const parsed = Number.parseFloat(normalized);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Unable to parse amount from UI value: "${value}"`);
+  }
+
+  return parsed;
+}
+
 async function createAuthenticatedContext(prisma: PrismaClient, browser: Browser, propertyId: string, requestId: string): Promise<BrowserContext> {
   const username = process.env.CLOUDBEDS_USERNAME?.trim();
   const password = process.env.CLOUDBEDS_PASSWORD?.trim();
@@ -202,6 +216,10 @@ async function createAuthenticatedContext(prisma: PrismaClient, browser: Browser
     });
   } else {
     context = await browser.newContext();
+    logger.logInfo('No persisted session found; will perform interactive login', 'CloudbedsChargeAutomation', 'createAuthenticatedContext', requestId, {
+      propertyId: normalizedPropertyId,
+      username,
+    });
   }
 
   const page = await context.newPage();
@@ -240,6 +258,10 @@ async function createAuthenticatedContext(prisma: PrismaClient, browser: Browser
 
   await page.goto(buildDashboardUrl(normalizedPropertyId), { waitUntil: 'domcontentloaded' });
   await page.waitForURL(new RegExp(`hotels\\.cloudbeds\\.com/connect/${normalizedPropertyId}#/(dashboard)?`), { timeout: 120000 });
+
+  logger.logInfo('Navigated to Cloudbeds dashboard and session is ready', 'CloudbedsChargeAutomation', 'createAuthenticatedContext', requestId, {
+    currentUrl: page.url(),
+  });
 
   const state = await context.storageState();
   const stateJson = JSON.stringify(state);
@@ -313,6 +335,9 @@ async function openSideDrawerIfNeeded(page: Page, requestId: string): Promise<vo
     throw new Error('Unable to find the Cloudbeds menu button to open the side drawer.');
   }
 
+  logger.logInfo('Clicking Cloudbeds menu button to open side drawer', 'CloudbedsChargeAutomation', 'openSideDrawerIfNeeded', requestId, {
+    currentUrl: page.url(),
+  });
   await humanDelay(page, requestId, 'before-click-menu-button');
   await menuButton.click();
   await Promise.race([
@@ -320,6 +345,8 @@ async function openSideDrawerIfNeeded(page: Page, requestId: string): Promise<vo
     reservationsLink.waitFor({ state: 'visible', timeout: 30000 }),
     reservationsMenuItemByRole.waitFor({ state: 'visible', timeout: 30000 }),
   ]);
+
+  logger.logInfo('Side drawer opened and Reservations entry became visible', 'CloudbedsChargeAutomation', 'openSideDrawerIfNeeded', requestId);
 }
 
 async function clickReservationNameFromResults(page: Page, requestId: string, reservationId: string): Promise<void> {
@@ -332,6 +359,10 @@ async function clickReservationNameFromResults(page: Page, requestId: string, re
     page.waitForURL(/#\/reservations\/[0-9]+/, { timeout: 120000 }),
     nameLink.click(),
   ]);
+
+  logger.logInfo('Reservation details page opened', 'CloudbedsChargeAutomation', 'clickReservationNameFromResults', requestId, {
+    currentUrl: page.url(),
+  });
 }
 
 async function openCreditCardsTab(page: Page, requestId: string): Promise<void> {
@@ -339,10 +370,17 @@ async function openCreditCardsTab(page: Page, requestId: string): Promise<void> 
   const addCardButton = page.getByRole('button', { name: /add card/i });
 
   await creditCardsTab.waitFor({ state: 'visible', timeout: 60000 });
+  logger.logInfo('Opening Credit Cards tab', 'CloudbedsChargeAutomation', 'openCreditCardsTab', requestId, {
+    currentUrl: page.url(),
+  });
   await humanDelay(page, requestId, 'before-click-credit-cards-tab');
   await creditCardsTab.click();
   await addCardButton.waitFor({ state: 'visible', timeout: 120000 });
   await observePause(page, requestId, 'after-credit-cards-tab-load');
+
+  logger.logInfo('Credit Cards tab opened', 'CloudbedsChargeAutomation', 'openCreditCardsTab', requestId, {
+    currentUrl: page.url(),
+  });
 
   const { creditCardsWaitMs } = getHumanDelayConfig();
   if (creditCardsWaitMs > 0) {
@@ -357,9 +395,19 @@ async function clickAuthorizeButtonOnSelectedCard(page: Page, requestId: string)
   const authorizeControl = byRoleButton.or(byAriaRole).or(byExactText).first();
 
   await authorizeControl.waitFor({ state: 'visible', timeout: 60000 });
+
+  const authorizeText = await authorizeControl.textContent().catch(() => null);
+  logger.logInfo('Located Authorize control on Credit Cards tab', 'CloudbedsChargeAutomation', 'clickAuthorizeButtonOnSelectedCard', requestId, {
+    buttonText: authorizeText,
+  });
+
   await humanDelay(page, requestId, 'before-click-authorize-button');
   await authorizeControl.click();
   await observePause(page, requestId, 'after-click-authorize-button');
+
+  logger.logInfo('Clicked Authorize button for selected credit card', 'CloudbedsChargeAutomation', 'clickAuthorizeButtonOnSelectedCard', requestId, {
+    buttonText: authorizeText,
+  });
 }
 
 function getChargeAmountInput(modal: Locator): Locator {
@@ -387,6 +435,8 @@ async function authorizeCreditCardInModal(page: Page, requestId: string, amount:
 
   await expect(modalTitle).toBeVisible({ timeout: 60000 });
 
+  logger.logInfo('Authorize Credit Card modal is visible and title validated', 'CloudbedsChargeAutomation', 'authorizeCreditCardInModal', requestId);
+
   const amountInput = getChargeAmountInput(modalContent);
   await expect(amountInput).toBeVisible({ timeout: 60000 });
   await humanDelay(page, requestId, 'before-fill-auth-amount');
@@ -400,6 +450,9 @@ async function authorizeCreditCardInModal(page: Page, requestId: string, amount:
   await humanDelay(page, requestId, 'before-click-auth-confirm');
   await authorizeButton.click();
 
+  logger.logInfo('Waiting 10s after clicking Authorize in modal to observe UI state', 'CloudbedsChargeAutomation', 'authorizeCreditCardInModal', requestId);
+  await page.waitForTimeout(10_000);
+
   await Promise.race([
     modalContent.waitFor({ state: 'hidden', timeout: 60000 }).catch(() => undefined),
     modalContent.waitFor({ state: 'detached', timeout: 60000 }).catch(() => undefined),
@@ -410,6 +463,8 @@ async function authorizeCreditCardInModal(page: Page, requestId: string, amount:
   const voidButton = page.locator('[data-hook="void-card"]').first();
   await expect(captureButton).toBeVisible({ timeout: 60000 });
   await expect(voidButton).toBeVisible({ timeout: 60000 });
+
+  logger.logInfo('Capture and Void buttons are visible after authorization', 'CloudbedsChargeAutomation', 'authorizeCreditCardInModal', requestId);
 }
 
 async function captureAuthorizedAmount(page: Page, requestId: string, amount: string): Promise<void> {
@@ -421,25 +476,58 @@ async function captureAuthorizedAmount(page: Page, requestId: string, amount: st
   const captureModal = page.locator('.modal-content').filter({ hasText: /capture/i }).first();
   await captureModal.waitFor({ state: 'visible', timeout: 60000 });
 
+  logger.logInfo('Clicked Capture button, waiting for modal', 'CloudbedsChargeAutomation', 'captureAuthorizedAmount', requestId);
+
   const amountInput = getChargeAmountInput(captureModal);
   await expect(amountInput).toBeVisible({ timeout: 60000 });
-  await amountInput.fill(amount);
 
-  const captureConfirmButton = captureModal
-    .locator('[data-hook="capture-confirm"]')
-    .or(captureModal.locator('[data-hook*="capture"][data-hook*="confirm"]').first())
-    .or(captureModal.getByRole('button', { name: /^Capture$/ }).first())
+  const uiValue = await amountInput.inputValue();
+  const uiAmount = formatAmountForComparison(uiValue);
+  const expectedAmount = formatAmountForComparison(amount);
+
+  logger.logInfo('Capture modal input value read', 'CloudbedsChargeAutomation', 'captureAuthorizedAmount', requestId, {
+    uiValue,
+    uiAmount,
+    expectedAmount,
+  });
+
+  if (Math.abs(uiAmount - expectedAmount) > 0.009) {
+    throw new Error(`Capture amount mismatch: UI="${uiValue}" parsed=${uiAmount} expected=${expectedAmount}`);
+  }
+
+  logger.logInfo('Capture modal amount matches ChargeTask amount', 'CloudbedsChargeAutomation', 'captureAuthorizedAmount', requestId);
+
+  // IMPORTANT: Do NOT click Capture confirm in worker runtime mode.
+  // The Capture confirm button actually deducts money.
+  // const captureConfirmButton = captureModal
+  //   .locator('[data-hook="capture-confirm"]')
+  //   .or(captureModal.locator('[data-hook*="capture"][data-hook*="confirm"]').first())
+  //   .or(captureModal.getByRole('button', { name: /^Capture$/ }).first())
+  //   .first();
+  //
+  // await expect(captureConfirmButton).toBeVisible({ timeout: 60000 });
+  // await humanDelay(page, requestId, 'before-click-capture-confirm');
+  // await captureConfirmButton.click();
+
+  const cancelButton = captureModal
+    .locator('[data-hook="capture-cancel"]')
+    .or(captureModal.getByRole('link', { name: /cancel/i }))
+    .or(captureModal.getByText(/cancel/i).first())
     .first();
 
-  await expect(captureConfirmButton).toBeVisible({ timeout: 60000 });
-  await humanDelay(page, requestId, 'before-click-capture-confirm');
-  await captureConfirmButton.click();
+  await expect(cancelButton).toBeVisible({ timeout: 60000 });
+  await humanDelay(page, requestId, 'before-click-capture-cancel');
+  await cancelButton.click();
 
   await Promise.race([
     captureModal.waitFor({ state: 'hidden', timeout: 60000 }).catch(() => undefined),
     captureModal.waitFor({ state: 'detached', timeout: 60000 }).catch(() => undefined),
-    page.getByText(/success!/i).first().waitFor({ state: 'visible', timeout: 60000 }).catch(() => undefined),
   ]);
+
+  logger.logInfo('Clicked Cancel in Capture modal', 'CloudbedsChargeAutomation', 'captureAuthorizedAmount', requestId);
+
+  logger.logInfo('Waiting 10s after cancelling Capture modal to observe UI state', 'CloudbedsChargeAutomation', 'captureAuthorizedAmount', requestId);
+  await page.waitForTimeout(10_000);
 }
 
 async function goToReservationAndCapture(page: Page, propertyId: string, reservationId: string, amount: string, requestId: string): Promise<void> {
