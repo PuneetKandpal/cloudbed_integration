@@ -38,8 +38,8 @@ import path from 'node:path';
 import express, { type Request, type Response } from 'express';
 import cron from 'node-cron';
 import dotenv from 'dotenv';
-import { chromium, type Browser, type BrowserContext } from '@playwright/test';
 import { ChargeTaskStatus, PaymentStatus, PrismaClient } from '@prisma/client';
+import { runCloudbedsChargeAutomation } from './automation/cloudbeds-charge';
 
 // Load environment variables
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
@@ -111,6 +111,7 @@ async function runCloudbedsPlaywrightAutomation(params: {
   amount: number;
   currency: string;
   taskId: string;
+  requestId?: string | null;
 }): Promise<{ success: boolean; error?: string }> {
   const timeoutMs = parseIntOr(process.env.PAYMENT_PLAYWRIGHT_TIMEOUT_MS, 4 * 60 * 1000);
 
@@ -120,56 +121,43 @@ async function runCloudbedsPlaywrightAutomation(params: {
     reservationId: params.reservationId,
     amount: params.amount,
     currency: params.currency,
+    requestId: params.requestId,
     timeoutMs,
   });
 
-  let browser: Browser | null = null;
-  let context: BrowserContext | null = null;
-
   try {
-    // Launch browser
-    browser = await chromium.launch({
-      headless: false, // Set to true for production
-      timeout: timeoutMs,
-    });
+    await Promise.race([
+      runCloudbedsChargeAutomation({
+        prisma,
+        propertyId: params.propertyId,
+        reservationId: params.reservationId,
+        amount: params.amount,
+        currency: params.currency,
+        taskId: params.taskId,
+        requestId: params.requestId,
+      }),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error(`Playwright automation timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+      }),
+    ]);
 
-    // Load auth state if exists
-    const authFile = path.resolve(__dirname, '../.auth/user.json');
-    
-    context = await browser.newContext({
-      storageState: authFile,
-    });
-
-    const page = await context.newPage();
-
-    // Import and execute the automation flow
-    // This requires compiling the TypeScript tests - for now use dynamic import
-    const { goToReservationsAndSearch } = await import('../tests/utils/cloudbeds-reservations-flow');
-    
-    // Execute the payment charge automation
-    await goToReservationsAndSearch(page, params.propertyId, params.reservationId);
-    
-    // Navigate to credit card tab and authorize
-    // (This assumes the automation flow in cloudbeds-reservations-flow handles the charge)
-    
     logger.info('Playwright automation completed successfully', {
       taskId: params.taskId,
     });
 
     return { success: true };
   } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
     logger.error('Playwright automation failed', error, {
       taskId: params.taskId,
-      errorMessage: errorMsg,
+      requestId: params.requestId,
+      errorMessage,
     });
 
-    return { success: false, error: errorMsg };
-  } finally {
-    // Cleanup
-    if (context) await context.close().catch(() => {});
-    if (browser) await browser.close().catch(() => {});
+    return { success: false, error: errorMessage };
   }
 }
 
@@ -270,6 +258,7 @@ async function processChargeTask(task: {
     amount: Number(task.amount),
     currency: task.currency,
     taskId: task.id,
+    requestId: task.requestId,
   });
 
   // Step 4a: Handle SUCCESS - Update payment, booking, and task

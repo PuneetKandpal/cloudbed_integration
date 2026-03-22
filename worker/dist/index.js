@@ -39,11 +39,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const node_path_1 = __importDefault(require("node:path"));
-const node_child_process_1 = require("node:child_process");
 const express_1 = __importDefault(require("express"));
 const node_cron_1 = __importDefault(require("node-cron"));
 const dotenv_1 = __importDefault(require("dotenv"));
 const client_1 = require("@prisma/client");
+const cloudbeds_charge_1 = require("./automation/cloudbeds-charge");
 // Load environment variables
 dotenv_1.default.config({ path: node_path_1.default.resolve(__dirname, '../.env') });
 /**
@@ -112,57 +112,40 @@ async function runCloudbedsPlaywrightAutomation(params) {
         reservationId: params.reservationId,
         amount: params.amount,
         currency: params.currency,
+        requestId: params.requestId,
         timeoutMs,
     });
-    return await new Promise((resolve) => {
-        const child = (0, node_child_process_1.spawn)('npm', ['run', 'playwright:cloudbeds-login'], {
-            cwd: node_path_1.default.resolve(__dirname, '..'),
-            env: {
-                ...process.env,
-                CLOUDBEDS_PROPERTY_ID: params.propertyId,
-                CLOUDBEDS_RESERVATION_ID: params.reservationId,
-                PAYMENT_AMOUNT: String(params.amount),
-                PAYMENT_CURRENCY: params.currency,
-            },
-            stdio: ['ignore', 'pipe', 'pipe'],
-        });
-        let stderr = '';
-        const timer = setTimeout(() => {
-            logger.warn('Playwright automation timed out, killing process', {
+    try {
+        await Promise.race([
+            (0, cloudbeds_charge_1.runCloudbedsChargeAutomation)({
+                prisma,
+                propertyId: params.propertyId,
+                reservationId: params.reservationId,
+                amount: params.amount,
+                currency: params.currency,
                 taskId: params.taskId,
-                timeoutMs,
-            });
-            child.kill('SIGKILL');
-            resolve({ success: false, error: `Playwright automation timed out after ${timeoutMs}ms` });
-        }, timeoutMs);
-        child.stderr?.on('data', (chunk) => {
-            stderr += String(chunk ?? '');
+                requestId: params.requestId,
+            }),
+            new Promise((_, reject) => {
+                setTimeout(() => {
+                    reject(new Error(`Playwright automation timed out after ${timeoutMs}ms`));
+                }, timeoutMs);
+            }),
+        ]);
+        logger.info('Playwright automation completed successfully', {
+            taskId: params.taskId,
         });
-        child.on('error', (error) => {
-            clearTimeout(timer);
-            logger.error('Playwright process error', error, { taskId: params.taskId });
-            resolve({ success: false, error: String(error) });
+        return { success: true };
+    }
+    catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.error('Playwright automation failed', error, {
+            taskId: params.taskId,
+            requestId: params.requestId,
+            errorMessage,
         });
-        child.on('close', (code) => {
-            clearTimeout(timer);
-            if (code === 0) {
-                logger.info('Playwright automation completed successfully', {
-                    taskId: params.taskId,
-                    exitCode: code,
-                });
-                resolve({ success: true });
-                return;
-            }
-            const trimmed = stderr.trim();
-            const errorMsg = trimmed ? trimmed.slice(-2000) : `Playwright script exited with code ${code}`;
-            logger.error('Playwright automation failed', null, {
-                taskId: params.taskId,
-                exitCode: code,
-                stderr: errorMsg,
-            });
-            resolve({ success: false, error: errorMsg });
-        });
-    });
+        return { success: false, error: errorMessage };
+    }
 }
 /**
  * =====================================================
@@ -243,6 +226,7 @@ async function processChargeTask(task) {
         amount: Number(task.amount),
         currency: task.currency,
         taskId: task.id,
+        requestId: task.requestId,
     });
     // Step 4a: Handle SUCCESS - Update payment, booking, and task
     if (result.success) {
