@@ -378,8 +378,13 @@ async function authorizeCreditCardInModal(page: Page, requestId: string, amount:
     : page.locator('#card-details').filter({ hasText: /authorize credit card/i }).first();
 
   await modalContent.waitFor({ state: 'visible', timeout: 60000 });
-  const modalTitle = modalContent.locator('h4.modal-title.bold').filter({ hasText: /authorize credit card/i }).first()
-    .or(modalContent.getByRole('heading', { name: /authorize credit card/i }).first());
+
+  const boldTitle = modalContent.locator('h4.modal-title.bold').filter({ hasText: /authorize credit card/i });
+  const modalTitle =
+    (await boldTitle.count().catch(() => 0)) > 0
+      ? boldTitle.first()
+      : modalContent.getByRole('heading', { name: /authorize credit card/i }).first();
+
   await expect(modalTitle).toBeVisible({ timeout: 60000 });
 
   const amountInput = getChargeAmountInput(modalContent);
