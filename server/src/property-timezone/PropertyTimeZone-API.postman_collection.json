@@ -1,0 +1,85 @@
+{
+  "info": {
+    "_postman_id": "property-timezone-api",
+    "name": "PropertyTimeZone API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "property-timezone"
+  },
+  "item": [
+    {
+      "name": "List All Property Timezones",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/property-timezone",
+          "host": ["{{baseUrl}}"],
+          "path": ["property-timezone"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Get Timezone by PropertyId",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/property-timezone?propertyId=317803",
+          "host": ["{{baseUrl}}"],
+          "path": ["property-timezone"],
+          "query": [
+            {
+              "key": "propertyId",
+              "value": "317803",
+              "description": "Required: Property ID to fetch timezone for"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Create/Update (Upsert) Property Timezone",
+      "request": {
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"propertyId\": \"317803\",\n  \"timeZone\": \"Asia/Bangkok\",\n  \"requestId\": \"optional-request-id\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/property-timezone",
+          "host": ["{{baseUrl}}"],
+          "path": ["property-timezone"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Delete Property Timezone",
+      "request": {
+        "method": "DELETE",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/property-timezone/317803",
+          "host": ["{{baseUrl}}"],
+          "path": ["property-timezone", "317803"]
+        }
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000/api/v1",
+      "type": "string"
+    }
+  ]
+}

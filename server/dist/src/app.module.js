@@ -20,6 +20,7 @@ const email_module_1 = require("./email/email.module");
 const cancellation_policy_module_1 = require("./cancellation-policy/cancellation-policy.module");
 const scheduler_module_1 = require("./scheduler/scheduler.module");
 const occupancy_module_1 = require("./occupancy/occupancy.module");
+const property_timezone_module_1 = require("./property-timezone/property-timezone.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -39,6 +40,7 @@ exports.AppModule = AppModule = __decorate([
             risk_module_1.RiskModule,
             email_module_1.EmailModule,
             cancellation_policy_module_1.CancellationPolicyModule,
+            property_timezone_module_1.PropertyTimeZoneModule,
             scheduler_module_1.SchedulerModule,
             occupancy_module_1.OccupancyModule,
         ],

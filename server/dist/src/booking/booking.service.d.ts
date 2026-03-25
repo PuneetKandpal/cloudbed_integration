@@ -11,6 +11,8 @@ export declare class BookingService {
     private readonly cancellationPolicyService;
     private readonly logger;
     constructor(prisma: PrismaService, cloudbedApi: CloudbedApiService, paymentService: PaymentService, riskService: RiskAssessmentService, cancellationPolicyService: CancellationPolicyService);
+    private resolvePropertyTimeZone;
+    private shiftDateOnly;
     private parseCloudbedsDate;
     createBookingFromWebhook(payload: any, requestId: string): Promise<void>;
     private resolveReservationDates;

@@ -15,6 +15,7 @@ const prisma_service_1 = require("../prisma/prisma.service");
 const logger_service_1 = require("../common/logger/logger.service");
 const client_1 = require("@prisma/client");
 const date_fns_1 = require("date-fns");
+const date_fns_tz_1 = require("date-fns-tz");
 const cloudbed_api_service_1 = require("../cloudbed/cloudbed-api.service");
 const payment_service_1 = require("../payment/payment.service");
 const risk_assessment_service_1 = require("../risk/risk-assessment.service");
@@ -33,17 +34,60 @@ let BookingService = class BookingService {
         this.riskService = riskService;
         this.cancellationPolicyService = cancellationPolicyService;
     }
-    parseCloudbedsDate(value, source) {
+    async resolvePropertyTimeZone(propertyId) {
+        const rawPropertyId = String(propertyId ?? '').trim();
+        if (rawPropertyId) {
+            try {
+                const record = await this.prisma.propertyTimeZone.findUnique({
+                    where: { propertyId: rawPropertyId },
+                });
+                const fromDb = String(record?.timeZone ?? '').trim();
+                if (fromDb) {
+                    return fromDb;
+                }
+            }
+            catch (error) {
+                this.logger.logWarn('Failed to resolve property timezone from DB; falling back to env/default', 'BookingService', 'resolvePropertyTimeZone', this.logger.generateRequestId(), { propertyId: rawPropertyId, error });
+            }
+        }
+        const byPropertyKey = rawPropertyId
+            ? process.env[`PROPERTY_TIMEZONE_${rawPropertyId}`]
+            : undefined;
+        const tz = String(byPropertyKey ?? process.env.PROPERTY_TIMEZONE_DEFAULT ?? 'UTC').trim();
+        return tz || 'UTC';
+    }
+    shiftDateOnly(value, daysDelta) {
+        const raw = String(value ?? '').trim();
+        const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (!match) {
+            return raw;
+        }
+        const year = Number(match[1]);
+        const month = Number(match[2]);
+        const day = Number(match[3]);
+        const anchoredUtc = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+        if (daysDelta > 0) {
+            const forward = (0, date_fns_1.addDays)(anchoredUtc, daysDelta);
+            return forward.toISOString().slice(0, 10);
+        }
+        if (daysDelta < 0) {
+            const shifted = (0, date_fns_1.subDays)(anchoredUtc, Math.abs(daysDelta));
+            return shifted.toISOString().slice(0, 10);
+        }
+        return anchoredUtc.toISOString().slice(0, 10);
+    }
+    parseCloudbedsDate(value, source, timeZone) {
         const raw = String(value ?? '').trim();
         if (!raw) {
             return new Date();
         }
         const dateOnlyMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
         if (dateOnlyMatch) {
-            const year = Number(dateOnlyMatch[1]);
-            const month = Number(dateOnlyMatch[2]);
-            const day = Number(dateOnlyMatch[3]);
-            return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+            return (0, date_fns_tz_1.fromZonedTime)(`${raw}T00:00:00`, timeZone);
+        }
+        const dateTimeNoTzMatch = raw.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})$/);
+        if (dateTimeNoTzMatch) {
+            return (0, date_fns_tz_1.fromZonedTime)(`${dateTimeNoTzMatch[1]}T${dateTimeNoTzMatch[2]}`, timeZone);
         }
         try {
             return (0, date_fns_1.parseISO)(raw);
@@ -63,6 +107,9 @@ let BookingService = class BookingService {
                 this.logger.logWarn('Booking already exists, skipping creation', 'BookingService', 'createBookingFromWebhook', requestId, { reservationID: payload.reservationID });
                 return;
             }
+            const propertyId = payload.propertyID_str ||
+                (payload.propertyID ? String(payload.propertyID) : undefined);
+            const propertyTimeZone = await this.resolvePropertyTimeZone(propertyId);
             const reservationRateDetails = await this.cloudbedApi.getReservationsWithRateDetails(payload.reservationID, requestId);
             this.logger.logInfo('Cloudbeds getReservationsWithRateDetails (single source of truth)', 'BookingService', 'createBookingFromWebhook', requestId, {
                 reservationID: payload.reservationID,
@@ -109,10 +156,10 @@ let BookingService = class BookingService {
             const startDateStr = String(rateDetailsObj?.reservationCheckIn ?? '');
             const endDateStr = String(rateDetailsObj?.reservationCheckOut ?? '');
             const startDate = startDateStr
-                ? this.parseCloudbedsDate(startDateStr, 'rateDetails.reservationCheckIn')
+                ? this.parseCloudbedsDate(startDateStr, 'rateDetails.reservationCheckIn', propertyTimeZone)
                 : new Date();
             const endDate = endDateStr
-                ? this.parseCloudbedsDate(endDateStr, 'rateDetails.reservationCheckOut')
+                ? this.parseCloudbedsDate(endDateStr, 'rateDetails.reservationCheckOut', propertyTimeZone)
                 : (0, date_fns_1.addDays)(startDate, 1);
             this.logger.logInfo('Resolved reservation dates from rate details', 'BookingService', 'createBookingFromWebhook', requestId, {
                 reservationID: payload.reservationID,
@@ -122,7 +169,9 @@ let BookingService = class BookingService {
                 endDate,
             });
             const now = new Date();
-            const isSameDay = (0, date_fns_1.differenceInHours)(startDate, now) <= 24;
+            const nowLocalDateOnly = (0, date_fns_tz_1.formatInTimeZone)(now, propertyTimeZone, 'yyyy-MM-dd');
+            const checkInDateOnly = startDateStr || nowLocalDateOnly;
+            const isSameDay = nowLocalDateOnly === checkInDateOnly;
             const totalAmount = Number(rateDetailsObj?.total ?? 0);
             const remainingBalance = Number(rateDetailsObj?.balance ?? totalAmount);
             const currency = String(rateDetailsObj?.propertyCurrency ?? 'USD');
@@ -196,7 +245,7 @@ let BookingService = class BookingService {
             if (specialRequests) {
                 const cancelMatch = specialRequests.match(/cancelled until:\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})/i);
                 if (cancelMatch) {
-                    parsedCancellationDeadline = (0, date_fns_1.parseISO)(cancelMatch[1]);
+                    parsedCancellationDeadline = this.parseCloudbedsDate(cancelMatch[1], 'specialRequests.parsedCancellationDeadline', propertyTimeZone);
                     this.logger.logInfo('Parsed cancellation deadline from special requests', 'BookingService', 'createBookingFromWebhook', requestId, {
                         reservationID: payload.reservationID,
                         rawSpecialRequests: specialRequests,
@@ -213,11 +262,10 @@ let BookingService = class BookingService {
                 });
             }
             if (!cancellationDeadline && policyType === client_1.BookingPolicyType.FLEXIBLE) {
-                const propertyId = payload.propertyID_str || String(payload.propertyID);
                 const policy = await this.cancellationPolicyService.getCancellationPolicy(propertyId, requestId);
                 const daysBeforeCheckin = policy.daysBeforeCheckin;
-                cancellationDeadline = new Date(startDate);
-                cancellationDeadline.setDate(cancellationDeadline.getDate() - daysBeforeCheckin);
+                const isoDateOnly = this.shiftDateOnly(startDateStr, -daysBeforeCheckin);
+                cancellationDeadline = (0, date_fns_tz_1.fromZonedTime)(`${isoDateOnly}T23:59:59.999`, propertyTimeZone);
                 this.logger.logInfo('Calculated config-based cancellation deadline for flexible booking', 'BookingService', 'createBookingFromWebhook', requestId, {
                     reservationID: payload.reservationID,
                     propertyId,
@@ -225,6 +273,7 @@ let BookingService = class BookingService {
                     startDate,
                     cancellationDeadline,
                     parsedCancellationDeadline,
+                    propertyTimeZone,
                     usedParsedDeadline: false,
                     reason: 'Parsed deadline not available – fallback to DB config',
                 });

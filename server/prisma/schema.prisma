@@ -339,6 +339,14 @@ model CancellationPolicy {
   @@index([propertyId])
 }
 
+model PropertyTimeZone {
+  id         String   @id @default(uuid())
+  propertyId String   @unique
+  timeZone   String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
 // Webhook Event tracking
 model WebhookEvent {
   id                String              @id @default(uuid())

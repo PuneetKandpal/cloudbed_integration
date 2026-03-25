@@ -11,6 +11,7 @@ import { EmailModule } from './email/email.module';
 import { CancellationPolicyModule } from './cancellation-policy/cancellation-policy.module';
 import { SchedulerModule as AppSchedulerModule } from './scheduler/scheduler.module';
 import { OccupancyModule } from './occupancy/occupancy.module';
+import { PropertyTimeZoneModule } from './property-timezone/property-timezone.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { OccupancyModule } from './occupancy/occupancy.module';
     RiskModule,
     EmailModule,
     CancellationPolicyModule,
+    PropertyTimeZoneModule,
     AppSchedulerModule,
     OccupancyModule,
   ],
