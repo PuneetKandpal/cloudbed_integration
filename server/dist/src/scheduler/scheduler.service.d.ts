@@ -13,6 +13,7 @@ export declare class SchedulerService {
     private readonly cloudbedApi;
     private readonly logger;
     constructor(prisma: PrismaService, paymentService: PaymentService, emailService: EmailService, riskService: RiskAssessmentService, occupancyService: OccupancyService, cloudbedApi: CloudbedApiService);
+    private resolvePropertyTimeZone;
     monitorFlexibleBookings(): Promise<void>;
     processNonRefundableBookings(): Promise<void>;
     processPaymentRetries(): Promise<void>;

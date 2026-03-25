@@ -1,0 +1,120 @@
+{
+  "info": {
+    "_postman_id": "scheduler-api",
+    "name": "Scheduler API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "scheduler-api"
+  },
+  "item": [
+    {
+      "name": "Run Monitor Flexible",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "x-request-id",
+            "value": "optional-request-id",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/scheduler/run/monitor-flexible",
+          "host": ["{{baseUrl}}"],
+          "path": ["scheduler", "run", "monitor-flexible"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Run Process Non-Refundable",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "x-request-id",
+            "value": "optional-request-id",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/scheduler/run/process-non-refundable",
+          "host": ["{{baseUrl}}"],
+          "path": ["scheduler", "run", "process-non-refundable"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Run Process Retries",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "x-request-id",
+            "value": "optional-request-id",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/scheduler/run/process-retries",
+          "host": ["{{baseUrl}}"],
+          "path": ["scheduler", "run", "process-retries"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Run Send Reminders",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "x-request-id",
+            "value": "optional-request-id",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/scheduler/run/send-reminders",
+          "host": ["{{baseUrl}}"],
+          "path": ["scheduler", "run", "send-reminders"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Run Request Admin Cancellation",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "x-request-id",
+            "value": "optional-request-id",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"bookingId\": \"optional-booking-uuid\",\n  \"reservationId\": \"optional-reservation-id\",\n  \"force\": false\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/scheduler/run/request-admin-cancellation",
+          "host": ["{{baseUrl}}"],
+          "path": ["scheduler", "run", "request-admin-cancellation"]
+        }
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000/api/v1",
+      "type": "string"
+    }
+  ]
+}

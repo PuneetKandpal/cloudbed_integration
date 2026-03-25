@@ -6,7 +6,8 @@ import { PaymentService } from '../payment/payment.service';
 import { EmailService } from '../email/email.service';
 import { RiskAssessmentService } from '../risk/risk-assessment.service';
 import { BookingStatus, BookingPolicyType, EmailStatus, EmailType, PaymentStatus, RiskLevel } from '@prisma/client';
-import { differenceInHours, isBefore, addHours, format } from 'date-fns';
+import { addHours, differenceInCalendarDays, differenceInHours, format, parseISO } from 'date-fns';
+import { formatInTimeZone } from 'date-fns-tz';
 import { OccupancyService } from '../occupancy/occupancy.service';
 import { CloudbedApiService } from '../cloudbed/cloudbed-api.service';
 
@@ -27,6 +28,37 @@ export class SchedulerService {
     private readonly occupancyService: OccupancyService,
     private readonly cloudbedApi: CloudbedApiService,
   ) {}
+
+  private async resolvePropertyTimeZone(propertyId?: string): Promise<string> {
+    const rawPropertyId = String(propertyId ?? '').trim();
+    if (rawPropertyId) {
+      try {
+        const record = await this.prisma.propertyTimeZone.findUnique({
+          where: { propertyId: rawPropertyId },
+        });
+        const fromDb = String(record?.timeZone ?? '').trim();
+        if (fromDb) {
+          return fromDb;
+        }
+      } catch (error) {
+        this.logger.logWarn(
+          'Failed to resolve property timezone from DB; falling back to env/default',
+          'SchedulerService',
+          'resolvePropertyTimeZone',
+          this.logger.generateRequestId(),
+          { propertyId: rawPropertyId, error },
+        );
+      }
+    }
+
+    const byPropertyKey = rawPropertyId
+      ? process.env[`PROPERTY_TIMEZONE_${rawPropertyId}`]
+      : undefined;
+    const tz = String(
+      byPropertyKey ?? process.env.PROPERTY_TIMEZONE_DEFAULT ?? 'UTC',
+    ).trim();
+    return tz || 'UTC';
+  }
 
   /**
    * Monitor flexible bookings and trigger payment workflows
@@ -57,6 +89,9 @@ export class SchedulerService {
           },
           remainingBalance: {
             gt: 0, // Still has outstanding balance
+          },
+          payments: {
+            none: {},
           },
         },
         include: {
@@ -290,7 +325,7 @@ export class SchedulerService {
 
     try {
       const now = new Date();
-      const reminderWindow = addHours(now, 48);
+      const reminderWindow = addHours(now, 72);
       
       // Find bookings with check-in within 48 hours and outstanding balance
       const bookingsNeedingReminder = await this.prisma.booking.findMany({
@@ -319,6 +354,23 @@ export class SchedulerService {
 
       for (const booking of bookingsNeedingReminder) {
         if (!booking.guestEmail) continue;
+
+        const propertyTimeZone = await this.resolvePropertyTimeZone(booking.propertyId);
+        const nowLocalDateOnly = formatInTimeZone(now, propertyTimeZone, 'yyyy-MM-dd');
+        const checkInLocalDateOnly = formatInTimeZone(
+          booking.startDate,
+          propertyTimeZone,
+          'yyyy-MM-dd',
+        );
+
+        const daysUntilCheckIn = differenceInCalendarDays(
+          parseISO(checkInLocalDateOnly),
+          parseISO(nowLocalDateOnly),
+        );
+
+        if (daysUntilCheckIn < 0 || daysUntilCheckIn > 2) {
+          continue;
+        }
 
         try {
           await this.emailService.sendPaymentReminder(
@@ -425,18 +477,12 @@ export class SchedulerService {
 
       if (paymentResult.success) {
         this.logger.logInfo(
-          'Payment authorization successful',
+          'Payment authorization Queued successfully',
           'SchedulerService',
           'initiatePaymentWorkflow',
           requestId,
           { bookingId: booking.id },
         );
-
-        // Update booking status
-        await this.prisma.booking.update({
-          where: { id: booking.id },
-          data: { status: BookingStatus.CONFIRMED },
-        });
       } else {
         this.logger.logWarn(
           'Payment authorization failed',
@@ -451,8 +497,20 @@ export class SchedulerService {
         // - generate Cloudbeds payment link
         // - risky: send payment link immediately + notify support
         // - not risky: notify support and retry later (scheduler handles 24h)
-        const hoursUntilCheckIn = differenceInHours(booking.startDate, new Date());
-        if (hoursUntilCheckIn < 48) {
+        const propertyTimeZone = await this.resolvePropertyTimeZone(booking.propertyId);
+        const now = new Date();
+        const nowLocalDateOnly = formatInTimeZone(now, propertyTimeZone, 'yyyy-MM-dd');
+        const checkInLocalDateOnly = formatInTimeZone(
+          booking.startDate,
+          propertyTimeZone,
+          'yyyy-MM-dd',
+        );
+        const daysUntilCheckIn = differenceInCalendarDays(
+          parseISO(checkInLocalDateOnly),
+          parseISO(nowLocalDateOnly),
+        );
+
+        if (daysUntilCheckIn <= 2) {
           await this.riskService.assessBookingRisk(booking.id, requestId);
 
           const latestRisk = await this.prisma.riskAssessment.findFirst({
@@ -622,7 +680,12 @@ export class SchedulerService {
 
     // booking.startDate is captured from Cloudbeds reservationCheckIn (see BookingService.createBookingFromWebhook).
     // We treat it as the check-in date for occupancy snapshot purposes.
-    const checkinDate = format(new Date(booking.startDate), 'yyyy-MM-dd');
+    const propertyTimeZone = await this.resolvePropertyTimeZone(booking.propertyId);
+    const checkinDate = formatInTimeZone(
+      new Date(booking.startDate),
+      propertyTimeZone,
+      'yyyy-MM-dd',
+    );
 
     this.logger.logInfo(
       'Resolved check-in date for cancellation request flow',

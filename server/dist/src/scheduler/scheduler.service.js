@@ -19,6 +19,7 @@ const email_service_1 = require("../email/email.service");
 const risk_assessment_service_1 = require("../risk/risk-assessment.service");
 const client_1 = require("@prisma/client");
 const date_fns_1 = require("date-fns");
+const date_fns_tz_1 = require("date-fns-tz");
 const occupancy_service_1 = require("../occupancy/occupancy.service");
 const cloudbed_api_service_1 = require("../cloudbed/cloudbed-api.service");
 let SchedulerService = class SchedulerService {
@@ -37,6 +38,28 @@ let SchedulerService = class SchedulerService {
         this.occupancyService = occupancyService;
         this.cloudbedApi = cloudbedApi;
     }
+    async resolvePropertyTimeZone(propertyId) {
+        const rawPropertyId = String(propertyId ?? '').trim();
+        if (rawPropertyId) {
+            try {
+                const record = await this.prisma.propertyTimeZone.findUnique({
+                    where: { propertyId: rawPropertyId },
+                });
+                const fromDb = String(record?.timeZone ?? '').trim();
+                if (fromDb) {
+                    return fromDb;
+                }
+            }
+            catch (error) {
+                this.logger.logWarn('Failed to resolve property timezone from DB; falling back to env/default', 'SchedulerService', 'resolvePropertyTimeZone', this.logger.generateRequestId(), { propertyId: rawPropertyId, error });
+            }
+        }
+        const byPropertyKey = rawPropertyId
+            ? process.env[`PROPERTY_TIMEZONE_${rawPropertyId}`]
+            : undefined;
+        const tz = String(byPropertyKey ?? process.env.PROPERTY_TIMEZONE_DEFAULT ?? 'UTC').trim();
+        return tz || 'UTC';
+    }
     async monitorFlexibleBookings() {
         const requestId = `scheduler-flexible-${Date.now()}`;
         this.logger.logInfo('Starting flexible bookings monitoring job', 'SchedulerService', 'monitorFlexibleBookings', requestId, {});
@@ -51,6 +74,9 @@ let SchedulerService = class SchedulerService {
                     },
                     remainingBalance: {
                         gt: 0,
+                    },
+                    payments: {
+                        none: {},
                     },
                 },
                 include: {
@@ -167,7 +193,7 @@ let SchedulerService = class SchedulerService {
         this.logger.logInfo('Starting payment reminders job', 'SchedulerService', 'sendPaymentReminders', requestId, {});
         try {
             const now = new Date();
-            const reminderWindow = (0, date_fns_1.addHours)(now, 48);
+            const reminderWindow = (0, date_fns_1.addHours)(now, 72);
             const bookingsNeedingReminder = await this.prisma.booking.findMany({
                 where: {
                     status: client_1.BookingStatus.CREATED,
@@ -187,6 +213,13 @@ let SchedulerService = class SchedulerService {
             for (const booking of bookingsNeedingReminder) {
                 if (!booking.guestEmail)
                     continue;
+                const propertyTimeZone = await this.resolvePropertyTimeZone(booking.propertyId);
+                const nowLocalDateOnly = (0, date_fns_tz_1.formatInTimeZone)(now, propertyTimeZone, 'yyyy-MM-dd');
+                const checkInLocalDateOnly = (0, date_fns_tz_1.formatInTimeZone)(booking.startDate, propertyTimeZone, 'yyyy-MM-dd');
+                const daysUntilCheckIn = (0, date_fns_1.differenceInCalendarDays)((0, date_fns_1.parseISO)(checkInLocalDateOnly), (0, date_fns_1.parseISO)(nowLocalDateOnly));
+                if (daysUntilCheckIn < 0 || daysUntilCheckIn > 2) {
+                    continue;
+                }
                 try {
                     await this.emailService.sendPaymentReminder(booking.id, {
                         guestEmail: booking.guestEmail,
@@ -226,16 +259,16 @@ let SchedulerService = class SchedulerService {
         try {
             const paymentResult = await this.paymentService.authorizePayment(booking.id, booking.remainingBalance.toNumber(), requestId);
             if (paymentResult.success) {
-                this.logger.logInfo('Payment authorization successful', 'SchedulerService', 'initiatePaymentWorkflow', requestId, { bookingId: booking.id });
-                await this.prisma.booking.update({
-                    where: { id: booking.id },
-                    data: { status: client_1.BookingStatus.CONFIRMED },
-                });
+                this.logger.logInfo('Payment authorization Queued successfully', 'SchedulerService', 'initiatePaymentWorkflow', requestId, { bookingId: booking.id });
             }
             else {
                 this.logger.logWarn('Payment authorization failed', 'SchedulerService', 'initiatePaymentWorkflow', requestId, { bookingId: booking.id, reason: paymentResult.error });
-                const hoursUntilCheckIn = (0, date_fns_1.differenceInHours)(booking.startDate, new Date());
-                if (hoursUntilCheckIn < 48) {
+                const propertyTimeZone = await this.resolvePropertyTimeZone(booking.propertyId);
+                const now = new Date();
+                const nowLocalDateOnly = (0, date_fns_tz_1.formatInTimeZone)(now, propertyTimeZone, 'yyyy-MM-dd');
+                const checkInLocalDateOnly = (0, date_fns_tz_1.formatInTimeZone)(booking.startDate, propertyTimeZone, 'yyyy-MM-dd');
+                const daysUntilCheckIn = (0, date_fns_1.differenceInCalendarDays)((0, date_fns_1.parseISO)(checkInLocalDateOnly), (0, date_fns_1.parseISO)(nowLocalDateOnly));
+                if (daysUntilCheckIn <= 2) {
                     await this.riskService.assessBookingRisk(booking.id, requestId);
                     const latestRisk = await this.prisma.riskAssessment.findFirst({
                         where: { bookingId: booking.id },
@@ -303,7 +336,8 @@ let SchedulerService = class SchedulerService {
             this.logger.logWarn('Booking not found; cannot send admin cancellation request', 'SchedulerService', 'requestAdminCancellationForBooking', requestId, { bookingId });
             return { sent: false, recipients: [], reason: 'Booking not found' };
         }
-        const checkinDate = (0, date_fns_1.format)(new Date(booking.startDate), 'yyyy-MM-dd');
+        const propertyTimeZone = await this.resolvePropertyTimeZone(booking.propertyId);
+        const checkinDate = (0, date_fns_tz_1.formatInTimeZone)(new Date(booking.startDate), propertyTimeZone, 'yyyy-MM-dd');
         this.logger.logInfo('Resolved check-in date for cancellation request flow', 'SchedulerService', 'requestAdminCancellationForBooking', requestId, {
             bookingId,
             reservationId: booking.reservationId,
