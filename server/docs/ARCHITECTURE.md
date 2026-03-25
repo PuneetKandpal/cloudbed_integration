@@ -87,8 +87,10 @@ This system implements an automated booking payment workflow integrating Cloudbe
 **Location**: `src/payment/`
 
 **Responsibilities**:
+
 - Process payment authorizations
-- Handle payment retries (up to 3 attempts)
+- Enqueue payment charge tasks for asynchronous processing
+- Handle payment retries
 - Track payment status
 - Trigger manager approvals on failure
 
@@ -97,10 +99,22 @@ This system implements an automated booking payment workflow integrating Cloudbe
 - `payment.module.ts` - Module definition
 
 **Retry Logic**:
-- Attempt 1: Immediate
-- Attempt 2: 1 hour later
-- Attempt 3: 2 hours later
-- After 3 failures: Escalate to manager
+
+- Attempt 1: Immediate enqueue
+- Retries: hourly scheduler evaluates failed payments
+- Risky bookings: retry after 2 hours
+- Non-risky bookings: retry after 24 hours
+- After configured failures: request admin cancellation (manual action)
+
+### 3A. Payment Worker
+
+**Location**: `../worker/`
+
+**Responsibilities**:
+
+- Poll `ChargeTask` records
+- Execute Cloudbeds UI automation to charge payments
+- Update `Payment` status to `CAPTURED` or `FAILED`
 
 ### 4. Risk Assessment Module
 **Location**: `src/risk/`
@@ -142,6 +156,7 @@ This system implements an automated booking payment workflow integrating Cloudbe
 **Location**: `src/cloudbed/`
 
 **Responsibilities**:
+
 - Fetch reservation details
 - Fetch guest information
 - Interface with Cloudbed REST API
@@ -150,6 +165,7 @@ This system implements an automated booking payment workflow integrating Cloudbe
 **Location**: `src/prisma/`
 
 **Responsibilities**:
+
 - Database connection management
 - ORM client provisioning
 - Transaction handling
@@ -158,6 +174,7 @@ This system implements an automated booking payment workflow integrating Cloudbe
 **Location**: `src/common/logger/`
 
 **Responsibilities**:
+
 - Structured logging with Winston
 - Daily log rotation
 - 15-day retention policy
@@ -188,14 +205,22 @@ This system implements an automated booking payment workflow integrating Cloudbe
    - Same-Day → Immediate payment
 
 5. **Payment Processing**
-   - Authorize payment
-   - On success → Capture funds
-   - On failure → Schedule retry
+   - Authorize payment (creates `Payment` + enqueues `ChargeTask`)
+   - Worker captures funds and marks `Payment` as `CAPTURED` or `FAILED`
+   - Scheduler retries based on failed payments
 
 6. **Notifications**
    - Payment confirmation email
    - Or payment reminder email
    - Manager alert if needed
+
+### First Failure Escalation (Option A)
+
+When a payment attempt fails and check-in is within 2 days:
+- Always generate a Cloudbeds payment link
+- Always email the link to the guest (if `guestEmail` exists)
+- Always notify support
+- Deduplicate using `Booking.escalatedAt`
 
 ### Check-In Flow
 

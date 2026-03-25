@@ -103,17 +103,25 @@ Where `effectiveDeadline = parsedCancellationDeadline ?? cancellationDeadline`.
 | `sendPaymentReminders` | every 12h | Email guests 48h prior to check-in when balance outstanding. |
 
 ### 4.2 Payment Workflow
+
 1. Scheduler/booking calls `PaymentService.authorizePayment(bookingId, amount)`.
-2. Service logs, creates `Payment` record (status PENDING), calls mocked gateway `authorizeAndCharge`.
-3. Success → mark payment CAPTURED, set booking `paidAmount=total`, `remainingBalance=0`, optionally update status to CONFIRMED.
-4. Failure → mark payment FAILED, store error, scheduler uses `PaymentStatus.FAILED` records for retry logic.
-5. After ≥2 failed attempts (configurable), scheduler sets `requiresManagerApproval` and emails manager for manual decision.
+2. Service logs, creates `Payment` record (status PENDING), enqueues a `ChargeTask` record for the payment worker.
+3. Worker processes `ChargeTask` asynchronously and marks `Payment` as `CAPTURED` or `FAILED`.
+4. Scheduler uses `PaymentStatus.FAILED` records for retry logic.
+5. After configured failed attempts, scheduler sets `requiresManagerApproval` and sends an admin cancellation request email (manual action).
 
 ### 4.3 Email Notifications
+
 - **Payment Reminder**: booking info, amount, deadlines, contact guidance.
-- **Support Notification**: triggered for high-risk bookings requiring staff intervention (manual call/email).
+- **Support Notification**: triggered during escalation when payment failures require staff intervention.
 - **Cancellation Warning**: warns guest payment failure may cause cancellation (used before deadline/cut-off).
 - **Manager Escalation**: details payment failure attempts, risk level, check-in, amount due.
+
+**First Failure Escalation (Option A)**:
+
+- Trigger: first `PaymentStatus.FAILED` (attempt 1) AND check-in is within 2 days.
+- Action: generate Cloudbeds payment link, email it to the guest (if `guestEmail` exists), and notify support.
+- Deduplication: `Booking.escalatedAt` prevents repeating the escalation on retries.
 
 All email attempts recorded in `Email` table with status transitions (PENDING → SENT or failure).
 

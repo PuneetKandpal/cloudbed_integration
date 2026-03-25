@@ -181,6 +181,49 @@ let SchedulerService = class SchedulerService {
                     });
                     await this.retryPayment(booking, riskAssessment, requestId);
                 }
+                if (lastPayment.attemptNumber === 1 && !booking.escalatedAt) {
+                    const propertyTimeZone = await this.resolvePropertyTimeZone(booking.propertyId);
+                    const nowLocalDateOnly = (0, date_fns_tz_1.formatInTimeZone)(now, propertyTimeZone, 'yyyy-MM-dd');
+                    const checkInLocalDateOnly = (0, date_fns_tz_1.formatInTimeZone)(booking.startDate, propertyTimeZone, 'yyyy-MM-dd');
+                    const daysUntilCheckIn = (0, date_fns_1.differenceInCalendarDays)((0, date_fns_1.parseISO)(checkInLocalDateOnly), (0, date_fns_1.parseISO)(nowLocalDateOnly));
+                    if (daysUntilCheckIn <= 2) {
+                        this.logger.logInfo('Escalating first payment failure', 'SchedulerService', 'processPaymentRetries', requestId, {
+                            bookingId: booking.id,
+                            reservationId: booking.reservationId,
+                            attemptNumber: lastPayment.attemptNumber,
+                            daysUntilCheckIn,
+                        });
+                        await this.riskService.assessBookingRisk(booking.id, requestId);
+                        const latestRisk = await this.prisma.riskAssessment.findFirst({
+                            where: { bookingId: booking.id },
+                            orderBy: { assessedAt: 'desc' },
+                        });
+                        try {
+                            const paymentLink = await this.cloudbedApi.generatePaymentLink({ reservationId: booking.reservationId, propertyId: booking.propertyId }, requestId);
+                            if (booking.guestEmail) {
+                                await this.emailService.sendPaymentLink(booking.id, booking.guestEmail, paymentLink, requestId);
+                            }
+                            await this.emailService.sendSupportNotification(booking.id, {
+                                guestEmail: booking.guestEmail || 'unknown',
+                                guestName: undefined,
+                                reservationId: booking.reservationId,
+                                propertyName: booking.propertyName || 'Property',
+                                startDate: booking.startDate,
+                                riskLevel: latestRisk?.riskLevel ?? 'UNKNOWN',
+                                totalAmount: booking.totalAmount.toNumber(),
+                                currency: booking.currency,
+                            }, requestId);
+                            await this.prisma.booking.update({
+                                where: { id: booking.id },
+                                data: { escalatedAt: now },
+                            });
+                            this.logger.logInfo('Escalation completed for first payment failure', 'SchedulerService', 'processPaymentRetries', requestId, { bookingId: booking.id });
+                        }
+                        catch (error) {
+                            this.logger.logWarn('Failed to complete escalation for first payment failure', 'SchedulerService', 'processPaymentRetries', requestId, { bookingId: booking.id, error: String(error) });
+                        }
+                    }
+                }
             }
             this.logger.logInfo('Completed payment retries processing job', 'SchedulerService', 'processPaymentRetries', requestId);
         }
@@ -260,42 +303,6 @@ let SchedulerService = class SchedulerService {
             const paymentResult = await this.paymentService.authorizePayment(booking.id, booking.remainingBalance.toNumber(), requestId);
             if (paymentResult.success) {
                 this.logger.logInfo('Payment authorization Queued successfully', 'SchedulerService', 'initiatePaymentWorkflow', requestId, { bookingId: booking.id });
-            }
-            else {
-                this.logger.logWarn('Payment authorization failed', 'SchedulerService', 'initiatePaymentWorkflow', requestId, { bookingId: booking.id, reason: paymentResult.error });
-                const propertyTimeZone = await this.resolvePropertyTimeZone(booking.propertyId);
-                const now = new Date();
-                const nowLocalDateOnly = (0, date_fns_tz_1.formatInTimeZone)(now, propertyTimeZone, 'yyyy-MM-dd');
-                const checkInLocalDateOnly = (0, date_fns_tz_1.formatInTimeZone)(booking.startDate, propertyTimeZone, 'yyyy-MM-dd');
-                const daysUntilCheckIn = (0, date_fns_1.differenceInCalendarDays)((0, date_fns_1.parseISO)(checkInLocalDateOnly), (0, date_fns_1.parseISO)(nowLocalDateOnly));
-                if (daysUntilCheckIn <= 2) {
-                    await this.riskService.assessBookingRisk(booking.id, requestId);
-                    const latestRisk = await this.prisma.riskAssessment.findFirst({
-                        where: { bookingId: booking.id },
-                        orderBy: { assessedAt: 'desc' },
-                    });
-                    const isRisky = latestRisk?.riskLevel === client_1.RiskLevel.HIGH ||
-                        latestRisk?.riskLevel === client_1.RiskLevel.CRITICAL;
-                    try {
-                        const paymentLink = await this.cloudbedApi.generatePaymentLink({ reservationId: booking.reservationId, propertyId: booking.propertyId }, requestId);
-                        if (isRisky && booking.guestEmail) {
-                            await this.emailService.sendPaymentLink(booking.id, booking.guestEmail, paymentLink, requestId);
-                        }
-                        await this.emailService.sendSupportNotification(booking.id, {
-                            guestEmail: booking.guestEmail || 'unknown',
-                            guestName: undefined,
-                            reservationId: booking.reservationId,
-                            propertyName: booking.propertyName || 'Property',
-                            startDate: booking.startDate,
-                            riskLevel: latestRisk?.riskLevel ?? 'UNKNOWN',
-                            totalAmount: booking.totalAmount.toNumber(),
-                            currency: booking.currency,
-                        }, requestId);
-                    }
-                    catch (error) {
-                        this.logger.logWarn('Failed to generate/send payment link/support notification', 'SchedulerService', 'initiatePaymentWorkflow', requestId, { bookingId: booking.id, error: String(error) });
-                    }
-                }
             }
         }
         catch (error) {

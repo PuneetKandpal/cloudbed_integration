@@ -266,7 +266,7 @@ export class SchedulerService {
         const hoursSinceFailure = differenceInHours(now, lastPayment.createdAt);
         const isRisky = riskAssessment?.riskLevel === RiskLevel.HIGH || 
                        riskAssessment?.riskLevel === RiskLevel.CRITICAL;
-        
+
         // Risky bookings: retry after 2 hours
         // Non-risky bookings: retry after 24 hours
         const retryThreshold = isRisky ? 2 : 24;
@@ -287,6 +287,96 @@ export class SchedulerService {
           );
 
           await this.retryPayment(booking, riskAssessment, requestId);
+        }
+
+        // Escalate on first payment failure if check-in is within 2 days and not already escalated
+        if (lastPayment.attemptNumber === 1 && !booking.escalatedAt) {
+          const propertyTimeZone = await this.resolvePropertyTimeZone(booking.propertyId);
+          const nowLocalDateOnly = formatInTimeZone(now, propertyTimeZone, 'yyyy-MM-dd');
+          const checkInLocalDateOnly = formatInTimeZone(
+            booking.startDate,
+            propertyTimeZone,
+            'yyyy-MM-dd',
+          );
+          const daysUntilCheckIn = differenceInCalendarDays(
+            parseISO(checkInLocalDateOnly),
+            parseISO(nowLocalDateOnly),
+          );
+
+          if (daysUntilCheckIn <= 2) {
+            this.logger.logInfo(
+              'Escalating first payment failure',
+              'SchedulerService',
+              'processPaymentRetries',
+              requestId,
+              {
+                bookingId: booking.id,
+                reservationId: booking.reservationId,
+                attemptNumber: lastPayment.attemptNumber,
+                daysUntilCheckIn,
+              },
+            );
+
+            await this.riskService.assessBookingRisk(booking.id, requestId);
+
+            const latestRisk = await this.prisma.riskAssessment.findFirst({
+              where: { bookingId: booking.id },
+              orderBy: { assessedAt: 'desc' },
+            });
+
+            try {
+              const paymentLink = await this.cloudbedApi.generatePaymentLink(
+                { reservationId: booking.reservationId, propertyId: booking.propertyId },
+                requestId,
+              );
+
+              if (booking.guestEmail) {
+                await this.emailService.sendPaymentLink(
+                  booking.id,
+                  booking.guestEmail,
+                  paymentLink,
+                  requestId,
+                );
+              }
+
+              await this.emailService.sendSupportNotification(
+                booking.id,
+                {
+                  guestEmail: booking.guestEmail || 'unknown',
+                  guestName: undefined,
+                  reservationId: booking.reservationId,
+                  propertyName: booking.propertyName || 'Property',
+                  startDate: booking.startDate,
+                  riskLevel: latestRisk?.riskLevel ?? 'UNKNOWN',
+                  totalAmount: booking.totalAmount.toNumber(),
+                  currency: booking.currency,
+                },
+                requestId,
+              );
+
+              // Mark as escalated to prevent duplicate escalations
+              await this.prisma.booking.update({
+                where: { id: booking.id },
+                data: { escalatedAt: now },
+              });
+
+              this.logger.logInfo(
+                'Escalation completed for first payment failure',
+                'SchedulerService',
+                'processPaymentRetries',
+                requestId,
+                { bookingId: booking.id },
+              );
+            } catch (error) {
+              this.logger.logWarn(
+                'Failed to complete escalation for first payment failure',
+                'SchedulerService',
+                'processPaymentRetries',
+                requestId,
+                { bookingId: booking.id, error: String(error) },
+              );
+            }
+          }
         }
       }
 
@@ -483,84 +573,6 @@ export class SchedulerService {
           requestId,
           { bookingId: booking.id },
         );
-      } else {
-        this.logger.logWarn(
-          'Payment authorization failed',
-          'SchedulerService',
-          'initiatePaymentWorkflow',
-          requestId,
-          { bookingId: booking.id, reason: paymentResult.error },
-        );
-
-        // If check-in is within 48 hours, follow the workflow diagram:
-        // - assess booking risk
-        // - generate Cloudbeds payment link
-        // - risky: send payment link immediately + notify support
-        // - not risky: notify support and retry later (scheduler handles 24h)
-        const propertyTimeZone = await this.resolvePropertyTimeZone(booking.propertyId);
-        const now = new Date();
-        const nowLocalDateOnly = formatInTimeZone(now, propertyTimeZone, 'yyyy-MM-dd');
-        const checkInLocalDateOnly = formatInTimeZone(
-          booking.startDate,
-          propertyTimeZone,
-          'yyyy-MM-dd',
-        );
-        const daysUntilCheckIn = differenceInCalendarDays(
-          parseISO(checkInLocalDateOnly),
-          parseISO(nowLocalDateOnly),
-        );
-
-        if (daysUntilCheckIn <= 2) {
-          await this.riskService.assessBookingRisk(booking.id, requestId);
-
-          const latestRisk = await this.prisma.riskAssessment.findFirst({
-            where: { bookingId: booking.id },
-            orderBy: { assessedAt: 'desc' },
-          });
-
-          const isRisky =
-            latestRisk?.riskLevel === RiskLevel.HIGH ||
-            latestRisk?.riskLevel === RiskLevel.CRITICAL;
-
-          try {
-            const paymentLink = await this.cloudbedApi.generatePaymentLink(
-              { reservationId: booking.reservationId, propertyId: booking.propertyId },
-              requestId,
-            );
-
-            if (isRisky && booking.guestEmail) {
-              await this.emailService.sendPaymentLink(
-                booking.id,
-                booking.guestEmail,
-                paymentLink,
-                requestId,
-              );
-            }
-
-            await this.emailService.sendSupportNotification(
-              booking.id,
-              {
-                guestEmail: booking.guestEmail || 'unknown',
-                guestName: undefined,
-                reservationId: booking.reservationId,
-                propertyName: booking.propertyName || 'Property',
-                startDate: booking.startDate,
-                riskLevel: latestRisk?.riskLevel ?? 'UNKNOWN',
-                totalAmount: booking.totalAmount.toNumber(),
-                currency: booking.currency,
-              },
-              requestId,
-            );
-          } catch (error) {
-            this.logger.logWarn(
-              'Failed to generate/send payment link/support notification',
-              'SchedulerService',
-              'initiatePaymentWorkflow',
-              requestId,
-              { bookingId: booking.id, error: String(error) },
-            );
-          }
-        }
       }
     } catch (error) {
       this.logger.logError(

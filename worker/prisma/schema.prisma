@@ -130,6 +130,7 @@ model Booking {
   cancellationReason    String?
   deletedAt             DateTime?
   deletionReason        String?
+  escalatedAt           DateTime?
   
   @@index([reservationId])
   @@index([propertyId])
