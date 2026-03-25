@@ -162,30 +162,67 @@ let SchedulerService = class SchedulerService {
                 },
             });
             this.logger.logInfo('Found bookings with failed payments', 'SchedulerService', 'processPaymentRetries', requestId, { count: bookingsForRetry.length });
+            let retryCount = 0;
+            let escalationCount = 0;
+            let skippedCount = 0;
             for (const booking of bookingsForRetry) {
                 const lastPayment = booking.payments[0];
                 const riskAssessment = booking.riskAssessments[0];
-                if (!lastPayment)
+                if (!lastPayment) {
+                    this.logger.logWarn('Skipping booking without failed payment record', 'SchedulerService', 'processPaymentRetries', requestId, { bookingId: booking.id });
                     continue;
-                const hoursSinceFailure = (0, date_fns_1.differenceInHours)(now, lastPayment.createdAt);
+                }
+                const minutesSinceFailure = (0, date_fns_1.differenceInMinutes)(now, lastPayment.createdAt);
                 const isRisky = riskAssessment?.riskLevel === client_1.RiskLevel.HIGH ||
                     riskAssessment?.riskLevel === client_1.RiskLevel.CRITICAL;
-                const retryThreshold = isRisky ? 2 : 24;
-                if (hoursSinceFailure >= retryThreshold) {
+                const retryThresholdMinutes = isRisky ? 120 : 1440;
+                this.logger.logInfo('Evaluating booking for retry/escalation', 'SchedulerService', 'processPaymentRetries', requestId, {
+                    bookingId: booking.id,
+                    reservationId: booking.reservationId,
+                    attemptNumber: lastPayment.attemptNumber,
+                    paymentStatus: lastPayment.status,
+                    minutesSinceFailure,
+                    isRisky,
+                    riskLevel: riskAssessment?.riskLevel ?? 'NONE',
+                    retryThresholdMinutes,
+                    escalatedAt: booking.escalatedAt,
+                });
+                if (minutesSinceFailure >= retryThresholdMinutes) {
                     this.logger.logInfo('Processing payment retry', 'SchedulerService', 'processPaymentRetries', requestId, {
                         bookingId: booking.id,
                         reservationId: booking.reservationId,
-                        hoursSinceFailure,
+                        minutesSinceFailure,
                         isRisky,
-                        retryThreshold,
+                        retryThresholdMinutes,
                     });
                     await this.retryPayment(booking, riskAssessment, requestId);
+                    retryCount++;
+                }
+                else {
+                    this.logger.logInfo('Skipping retry - not enough time elapsed', 'SchedulerService', 'processPaymentRetries', requestId, {
+                        bookingId: booking.id,
+                        minutesSinceFailure,
+                        retryThresholdMinutes,
+                        nextRetryInMinutes: retryThresholdMinutes - minutesSinceFailure,
+                    });
                 }
                 if (lastPayment.attemptNumber === 1 && !booking.escalatedAt) {
+                    this.logger.logInfo('Checking escalation criteria for first payment failure', 'SchedulerService', 'processPaymentRetries', requestId, {
+                        bookingId: booking.id,
+                        attemptNumber: lastPayment.attemptNumber,
+                        escalatedAt: booking.escalatedAt,
+                    });
                     const propertyTimeZone = await this.resolvePropertyTimeZone(booking.propertyId);
                     const nowLocalDateOnly = (0, date_fns_tz_1.formatInTimeZone)(now, propertyTimeZone, 'yyyy-MM-dd');
                     const checkInLocalDateOnly = (0, date_fns_tz_1.formatInTimeZone)(booking.startDate, propertyTimeZone, 'yyyy-MM-dd');
                     const daysUntilCheckIn = (0, date_fns_1.differenceInCalendarDays)((0, date_fns_1.parseISO)(checkInLocalDateOnly), (0, date_fns_1.parseISO)(nowLocalDateOnly));
+                    this.logger.logInfo('Calculated days until check-in for escalation', 'SchedulerService', 'processPaymentRetries', requestId, {
+                        bookingId: booking.id,
+                        propertyTimeZone,
+                        nowLocalDateOnly,
+                        checkInLocalDateOnly,
+                        daysUntilCheckIn,
+                    });
                     if (daysUntilCheckIn <= 2) {
                         this.logger.logInfo('Escalating first payment failure', 'SchedulerService', 'processPaymentRetries', requestId, {
                             bookingId: booking.id,
@@ -193,39 +230,104 @@ let SchedulerService = class SchedulerService {
                             attemptNumber: lastPayment.attemptNumber,
                             daysUntilCheckIn,
                         });
+                        escalationCount++;
+                        this.logger.logInfo('Performing risk assessment for escalation', 'SchedulerService', 'processPaymentRetries', requestId, { bookingId: booking.id });
                         await this.riskService.assessBookingRisk(booking.id, requestId);
                         const latestRisk = await this.prisma.riskAssessment.findFirst({
                             where: { bookingId: booking.id },
                             orderBy: { assessedAt: 'desc' },
                         });
+                        this.logger.logInfo('Risk assessment completed for escalation', 'SchedulerService', 'processPaymentRetries', requestId, {
+                            bookingId: booking.id,
+                            riskLevel: latestRisk?.riskLevel ?? 'UNKNOWN',
+                            riskScore: latestRisk?.riskScore ?? 0,
+                        });
                         try {
-                            const paymentLink = await this.cloudbedApi.generatePaymentLink({ reservationId: booking.reservationId, propertyId: booking.propertyId }, requestId);
-                            if (booking.guestEmail) {
-                                await this.emailService.sendPaymentLink(booking.id, booking.guestEmail, paymentLink, requestId);
-                            }
-                            await this.emailService.sendSupportNotification(booking.id, {
-                                guestEmail: booking.guestEmail || 'unknown',
-                                guestName: undefined,
+                            this.logger.logInfo('Generating payment link for escalation', 'SchedulerService', 'processPaymentRetries', requestId, {
+                                bookingId: booking.id,
                                 reservationId: booking.reservationId,
-                                propertyName: booking.propertyName || 'Property',
-                                startDate: booking.startDate,
-                                riskLevel: latestRisk?.riskLevel ?? 'UNKNOWN',
-                                totalAmount: booking.totalAmount.toNumber(),
-                                currency: booking.currency,
-                            }, requestId);
+                                propertyId: booking.propertyId,
+                            });
+                            const paymentLink = await this.cloudbedApi.generatePaymentLink({ reservationId: booking.reservationId, propertyId: booking.propertyId }, requestId);
+                            this.logger.logInfo('Payment link generated successfully', 'SchedulerService', 'processPaymentRetries', requestId, {
+                                bookingId: booking.id,
+                                paymentLinkGenerated: !!paymentLink,
+                            });
                             await this.prisma.booking.update({
                                 where: { id: booking.id },
                                 data: { escalatedAt: now },
                             });
+                            this.logger.logInfo('Marked booking as escalated', 'SchedulerService', 'processPaymentRetries', requestId, {
+                                bookingId: booking.id,
+                                escalatedAt: now.toISOString(),
+                            });
+                            if (booking.guestEmail) {
+                                this.logger.logInfo('Sending payment link email to guest', 'SchedulerService', 'processPaymentRetries', requestId, {
+                                    bookingId: booking.id,
+                                    guestEmail: booking.guestEmail,
+                                });
+                                try {
+                                    await this.emailService.sendPaymentLink(booking.id, booking.guestEmail, paymentLink, requestId);
+                                    this.logger.logInfo('Payment link email sent successfully', 'SchedulerService', 'processPaymentRetries', requestId, { bookingId: booking.id });
+                                }
+                                catch (error) {
+                                    this.logger.logWarn('Failed to send payment link email during escalation', 'SchedulerService', 'processPaymentRetries', requestId, { bookingId: booking.id, error: String(error) });
+                                }
+                            }
+                            else {
+                                this.logger.logWarn('No guest email available - skipping payment link email', 'SchedulerService', 'processPaymentRetries', requestId, { bookingId: booking.id });
+                            }
+                            this.logger.logInfo('Sending support notification', 'SchedulerService', 'processPaymentRetries', requestId, {
+                                bookingId: booking.id,
+                                guestEmail: booking.guestEmail || 'unknown',
+                                riskLevel: latestRisk?.riskLevel ?? 'UNKNOWN',
+                            });
+                            try {
+                                await this.emailService.sendSupportNotification(booking.id, {
+                                    guestEmail: booking.guestEmail || 'unknown',
+                                    guestName: undefined,
+                                    reservationId: booking.reservationId,
+                                    propertyName: booking.propertyName || 'Property',
+                                    startDate: booking.startDate,
+                                    riskLevel: latestRisk?.riskLevel ?? 'UNKNOWN',
+                                    totalAmount: booking.totalAmount.toNumber(),
+                                    currency: booking.currency,
+                                }, requestId);
+                                this.logger.logInfo('Support notification sent successfully', 'SchedulerService', 'processPaymentRetries', requestId, { bookingId: booking.id });
+                            }
+                            catch (error) {
+                                this.logger.logWarn('Failed to send support notification during escalation', 'SchedulerService', 'processPaymentRetries', requestId, { bookingId: booking.id, error: String(error) });
+                            }
                             this.logger.logInfo('Escalation completed for first payment failure', 'SchedulerService', 'processPaymentRetries', requestId, { bookingId: booking.id });
                         }
                         catch (error) {
                             this.logger.logWarn('Failed to complete escalation for first payment failure', 'SchedulerService', 'processPaymentRetries', requestId, { bookingId: booking.id, error: String(error) });
                         }
                     }
+                    else {
+                        this.logger.logInfo('Skipping escalation - check-in too far away', 'SchedulerService', 'processPaymentRetries', requestId, {
+                            bookingId: booking.id,
+                            daysUntilCheckIn,
+                            threshold: 2,
+                        });
+                        skippedCount++;
+                    }
+                }
+                else {
+                    this.logger.logInfo('Skipping escalation - not first attempt or already escalated', 'SchedulerService', 'processPaymentRetries', requestId, {
+                        bookingId: booking.id,
+                        attemptNumber: lastPayment.attemptNumber,
+                        escalatedAt: booking.escalatedAt,
+                    });
+                    skippedCount++;
                 }
             }
-            this.logger.logInfo('Completed payment retries processing job', 'SchedulerService', 'processPaymentRetries', requestId);
+            this.logger.logInfo('Completed payment retries processing job - Summary', 'SchedulerService', 'processPaymentRetries', requestId, {
+                totalBookings: bookingsForRetry.length,
+                retriesProcessed: retryCount,
+                escalationsProcessed: escalationCount,
+                skipped: skippedCount,
+            });
         }
         catch (error) {
             this.logger.logError('Failed to process payment retries', 'SchedulerService', 'processPaymentRetries', error, requestId);
