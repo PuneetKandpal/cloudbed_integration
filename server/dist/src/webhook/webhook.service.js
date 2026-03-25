@@ -66,6 +66,9 @@ let WebhookService = class WebhookService {
             case 'guest/updated':
                 await this.handleGuestUpdated(payload, requestId);
                 break;
+            case 'reservation/deleted':
+                await this.handleReservationDeleted(payload, requestId);
+                break;
             default:
                 this.logger.logWarn(`Unknown webhook event type: ${eventType}`, 'WebhookService', 'processWebhook', requestId, { eventType, payload });
         }
@@ -140,6 +143,34 @@ let WebhookService = class WebhookService {
     }
     async handleGuestUpdated(payload, requestId) {
         this.logger.logInfo('Handling guest updated event', 'WebhookService', 'handleGuestUpdated', requestId, { guestId: payload.guestId });
+    }
+    async handleReservationDeleted(payload, requestId) {
+        const reservationId = payload?.reservationId || payload?.reservationID;
+        this.logger.logInfo('Handling reservation deleted event', 'WebhookService', 'handleReservationDeleted', requestId, { reservationId });
+        try {
+            const updatedBooking = await this.prisma.booking.updateMany({
+                where: {
+                    reservationId: String(reservationId)
+                },
+                data: {
+                    status: 'DELETED',
+                    deletedAt: new Date(),
+                    deletionReason: 'Deleted via Cloudbeds webhook',
+                },
+            });
+            if (updatedBooking.count > 0) {
+                this.logger.logInfo('Successfully marked booking as deleted', 'WebhookService', 'handleReservationDeleted', requestId, {
+                    reservationId,
+                    bookingsUpdated: updatedBooking.count
+                });
+            }
+            else {
+                this.logger.logWarn('No booking found to mark as deleted', 'WebhookService', 'handleReservationDeleted', requestId, { reservationId });
+            }
+        }
+        catch (error) {
+            this.logger.logError('Failed to handle reservation deleted event', 'WebhookService', 'handleReservationDeleted', error, requestId, { reservationId });
+        }
     }
     async createAuditLog(payload, headers, requestId) {
         try {

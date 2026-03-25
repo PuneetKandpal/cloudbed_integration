@@ -76,7 +76,8 @@ let BookingService = class BookingService {
                 ? rawSource
                 : rawSource?.name ?? rateDetailsObj?.sourceName;
             const reservationSourceName = String(reservationSourceNameRaw ?? '').trim();
-            if (reservationSourceName.toLowerCase() !== 'hostelworld') {
+            const hostelworldSourceName = "hostelworld";
+            if (reservationSourceName.toLowerCase() !== hostelworldSourceName) {
                 this.logger.logInfo('Skipping booking creation (non-Hostelworld reservation)', 'BookingService', 'createBookingFromWebhook', requestId, {
                     reservationID: payload.reservationID,
                     reservationSourceName,
@@ -88,7 +89,7 @@ let BookingService = class BookingService {
             const rooms = Array.isArray(reservationRateDetailsRecord?.rooms)
                 ? reservationRateDetailsRecord.rooms
                 : [];
-            const reservationDetailedRoomRateNames = rooms
+            let reservationDetailedRoomRateNames = rooms
                 .flatMap((r) => {
                 const mapObj = r?.detailedRoomRateNames;
                 if (typeof mapObj !== 'object' || mapObj === null) {
@@ -98,12 +99,12 @@ let BookingService = class BookingService {
             })
                 .filter(Boolean);
             if (reservationDetailedRoomRateNames.length === 0) {
-                this.logger.logWarn('Skipping booking creation (no detailedRoomRateNames in reservation rate details)', 'BookingService', 'createBookingFromWebhook', requestId, {
+                this.logger.logInfo('No detailedRoomRateNames found - defaulting to flexible rate', 'BookingService', 'createBookingFromWebhook', requestId, {
                     reservationID: payload.reservationID,
                     sourceName: reservationSourceName,
                     roomsCount: rooms.length,
                 });
-                return;
+                reservationDetailedRoomRateNames = ['Flexible'];
             }
             const startDateStr = String(rateDetailsObj?.reservationCheckIn ?? '');
             const endDateStr = String(rateDetailsObj?.reservationCheckOut ?? '');

@@ -118,7 +118,9 @@ export class BookingService {
           : rawSource?.name ?? rateDetailsObj?.sourceName;
       const reservationSourceName = String(reservationSourceNameRaw ?? '').trim();
 
-      if (reservationSourceName.toLowerCase() !== 'hostelworld') {
+      const hostelworldSourceName = "hostelworld";
+
+      if (reservationSourceName.toLowerCase() !== hostelworldSourceName) {
         this.logger.logInfo(
           'Skipping booking creation (non-Hostelworld reservation)',
           'BookingService',
@@ -139,7 +141,7 @@ export class BookingService {
         ? ((reservationRateDetailsRecord as any).rooms as any[])
         : [];
 
-      const reservationDetailedRoomRateNames = rooms
+      let reservationDetailedRoomRateNames = rooms
         .flatMap((r) => {
           const mapObj = r?.detailedRoomRateNames;
           if (typeof mapObj !== 'object' || mapObj === null) {
@@ -151,9 +153,10 @@ export class BookingService {
         })
         .filter(Boolean);
 
+      // Default to flexible if no detailed room rate names are present
       if (reservationDetailedRoomRateNames.length === 0) {
-        this.logger.logWarn(
-          'Skipping booking creation (no detailedRoomRateNames in reservation rate details)',
+        this.logger.logInfo(
+          'No detailedRoomRateNames found - defaulting to flexible rate',
           'BookingService',
           'createBookingFromWebhook',
           requestId,
@@ -163,7 +166,7 @@ export class BookingService {
             roomsCount: rooms.length,
           },
         );
-        return;
+        reservationDetailedRoomRateNames = ['Flexible'];
       }
 
       const startDateStr = String(rateDetailsObj?.reservationCheckIn ?? '');

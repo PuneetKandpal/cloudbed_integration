@@ -25,6 +25,7 @@ enum BookingStatus {
   CHECKED_OUT
   CANCELLED
   NO_SHOW
+  DELETED
 }
 
 // Payment status types
@@ -127,6 +128,8 @@ model Booking {
   managerApprovedAt     DateTime?
   cancelledAt           DateTime?
   cancellationReason    String?
+  deletedAt             DateTime?
+  deletionReason        String?
   
   @@index([reservationId])
   @@index([propertyId])

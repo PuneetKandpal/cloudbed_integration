@@ -12,5 +12,6 @@ export declare class WebhookService {
     private handleAccommodationChanged;
     private handleGuestCreated;
     private handleGuestUpdated;
+    private handleReservationDeleted;
     private createAuditLog;
 }
