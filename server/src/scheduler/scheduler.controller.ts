@@ -33,6 +33,31 @@ export class SchedulerController {
     return { ok: true, requestId: requestId ?? null, job: 'sendPaymentReminders' };
   }
 
+  @Post('run/send-payment-link')
+  @HttpCode(HttpStatus.ACCEPTED)
+  async runSendPaymentLink(
+    @Body() body: { bookingId?: string; reservationId?: string },
+    @Headers('x-request-id') requestId?: string,
+  ) {
+    const resolvedRequestId = requestId ?? `manual-payment-link-${Date.now()}`;
+
+    const booking = await this.schedulerService.findBookingForAdminCancellation({
+      bookingId: body?.bookingId,
+      reservationId: body?.reservationId,
+    });
+
+    if (!booking) {
+      return { ok: false, requestId: resolvedRequestId, error: 'bookingId or reservationId not found' };
+    }
+
+    const result = await this.schedulerService.sendPaymentLinkForBooking(
+      booking.id,
+      resolvedRequestId,
+    );
+
+    return { ok: result.sent, requestId: resolvedRequestId, job: 'sendPaymentLinkForBooking', result };
+  }
+
   @Post('run/request-admin-cancellation')
   @HttpCode(HttpStatus.ACCEPTED)
   async runRequestAdminCancellation(

@@ -1,0 +1,385 @@
+{
+  "info": {
+    "name": "Scheduler — Payment Workflow (Worker-First, Payment-Link Fallback)",
+    "description": "End-to-end test collection for the payment workflow.\n\nFlow:\n1. Worker attempts charge (via monitorFlexible / processNonRefundable).\n2. If worker fails → payment link emailed to guest.\n3. If still unpaid → resend payment link (2h risky / 24h normal).\n4. After threshold → admin notified.\n\nPrerequisites:\n- Server running at {{baseUrl}} (default http://localhost:4000)\n- Database seeded with at least one booking\n- SMTP configured (or use MailHog/Ethereal for testing)\n- PAYMENT_LINK_TEMPLATE env var set (or uses fallback)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": {
+      "major": 2,
+      "minor": 0,
+      "patch": 0
+    }
+  },
+  "item": [
+    {
+      "name": "1. Happy Path — Worker Charge",
+      "description": "Trigger the scheduler jobs that enqueue worker charge tasks. These are the FIRST attempt (worker-based).",
+      "item": [
+        {
+          "name": "1a. Trigger Flexible Booking Monitor",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-request-id", "value": "test-flexible-{{$timestamp}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/scheduler/run/monitor-flexible",
+              "host": ["{{baseUrl}}"],
+              "path": ["scheduler", "run", "monitor-flexible"]
+            },
+            "description": "Finds FLEXIBLE bookings past cancellation deadline with no payment attempts.\nCreates Payment + ChargeTask for worker.\nExpected: 202 Accepted, job=monitorFlexibleBookings"
+          },
+          "response": []
+        },
+        {
+          "name": "1b. Trigger Non-Refundable Processing",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-request-id", "value": "test-nonrefundable-{{$timestamp}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/scheduler/run/process-non-refundable",
+              "host": ["{{baseUrl}}"],
+              "path": ["scheduler", "run", "process-non-refundable"]
+            },
+            "description": "Finds NON_REFUNDABLE bookings with no payment attempts.\nCreates Payment + ChargeTask for worker.\nExpected: 202 Accepted, job=processNonRefundableBookings"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "2. Worker Failure → Payment Link",
+      "description": "After worker fails (Payment.status=FAILED), trigger the retry job which should send a payment link email instead of re-attempting via worker.",
+      "item": [
+        {
+          "name": "2a. Trigger Payment Retries (sends payment link)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-request-id", "value": "test-retries-{{$timestamp}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/scheduler/run/process-retries",
+              "host": ["{{baseUrl}}"],
+              "path": ["scheduler", "run", "process-retries"]
+            },
+            "description": "Finds bookings with FAILED payments and outstanding balance.\n- First run: sends payment link email to guest.\n- Subsequent runs within risk window: skips (idempotent).\n- After threshold: sends admin notification.\nExpected: 202 Accepted, job=processPaymentRetries\n\nVerify:\n- Email table has new PAYMENT_LINK record for the booking\n- No new ChargeTask created (worker NOT re-attempted)"
+          },
+          "response": []
+        },
+        {
+          "name": "2b. Verify — Check Email Records",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "graphql",
+              "graphql": {
+                "query": "-- Run this SQL against your database to verify:\n-- SELECT id, \"bookingId\", \"emailType\", status, \"sentAt\"\n-- FROM \"Email\"\n-- WHERE \"emailType\" = 'PAYMENT_LINK'\n-- ORDER BY \"createdAt\" DESC\n-- LIMIT 10;"
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/scheduler/run/process-retries",
+              "host": ["{{baseUrl}}"],
+              "path": ["scheduler", "run", "process-retries"]
+            },
+            "description": "Re-run retries immediately — should SKIP (not enough time elapsed).\nVerify no duplicate PAYMENT_LINK emails created.\nCheck logs for 'Skipping resend — not enough time elapsed'."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "3. Manual Payment Link Send",
+      "description": "Manually trigger a payment link email for a specific booking (for testing or support use).",
+      "item": [
+        {
+          "name": "3a. Send Payment Link by bookingId",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-request-id", "value": "test-manual-link-{{$timestamp}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bookingId\": \"{{bookingId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/scheduler/run/send-payment-link",
+              "host": ["{{baseUrl}}"],
+              "path": ["scheduler", "run", "send-payment-link"]
+            },
+            "description": "Sends a payment link email for a specific booking.\nExpected: { ok: true, result: { sent: true } }\nIf no guest email: { ok: false, result: { sent: false, reason: 'No guest email on booking' } }"
+          },
+          "response": []
+        },
+        {
+          "name": "3b. Send Payment Link by reservationId",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-request-id", "value": "test-manual-link-res-{{$timestamp}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reservationId\": \"{{reservationId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/scheduler/run/send-payment-link",
+              "host": ["{{baseUrl}}"],
+              "path": ["scheduler", "run", "send-payment-link"]
+            },
+            "description": "Sends a payment link email using the Cloudbeds reservationId.\nUseful when you don't have the internal bookingId."
+          },
+          "response": []
+        },
+        {
+          "name": "3c. Send Payment Link — Booking Not Found",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bookingId\": \"non-existent-id\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/scheduler/run/send-payment-link",
+              "host": ["{{baseUrl}}"],
+              "path": ["scheduler", "run", "send-payment-link"]
+            },
+            "description": "Edge case: booking does not exist.\nExpected: { ok: false, error: 'bookingId or reservationId not found' }"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "4. Admin Escalation",
+      "description": "After payment link threshold exceeded, admin should be notified.",
+      "item": [
+        {
+          "name": "4a. Request Admin Cancellation",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-request-id", "value": "test-admin-cancel-{{$timestamp}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bookingId\": \"{{bookingId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/scheduler/run/request-admin-cancellation",
+              "host": ["{{baseUrl}}"],
+              "path": ["scheduler", "run", "request-admin-cancellation"]
+            },
+            "description": "Manually trigger admin cancellation request.\nExpected: { ok: true, result: { sent: true, recipients: [...] } }\nVerify: Email table has ADMIN_CANCELLATION_REQUEST record.\nVerify: Booking.requiresManagerApproval = true."
+          },
+          "response": []
+        },
+        {
+          "name": "4b. Request Admin Cancellation — Duplicate Prevention",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bookingId\": \"{{bookingId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/scheduler/run/request-admin-cancellation",
+              "host": ["{{baseUrl}}"],
+              "path": ["scheduler", "run", "request-admin-cancellation"]
+            },
+            "description": "Re-run — should NOT send a duplicate email.\nExpected: { ok: true, result: { sent: false, reason: 'Already requested' } }"
+          },
+          "response": []
+        },
+        {
+          "name": "4c. Force Admin Cancellation (bypass dedup)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bookingId\": \"{{bookingId}}\",\n  \"force\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/scheduler/run/request-admin-cancellation",
+              "host": ["{{baseUrl}}"],
+              "path": ["scheduler", "run", "request-admin-cancellation"]
+            },
+            "description": "Force resend even if already sent.\nExpected: { ok: true, result: { sent: true, recipients: [...] } }"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "5. Payment Reminders",
+      "description": "Reminder emails for upcoming bookings with outstanding balance.",
+      "item": [
+        {
+          "name": "5a. Trigger Payment Reminders",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-request-id", "value": "test-reminders-{{$timestamp}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/scheduler/run/send-reminders",
+              "host": ["{{baseUrl}}"],
+              "path": ["scheduler", "run", "send-reminders"]
+            },
+            "description": "Sends PAYMENT_REMINDER emails to guests with:\n- status=CREATED\n- remainingBalance > 0\n- check-in within 0-2 days\n- guestEmail present"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "6. Edge Cases",
+      "description": "Test edge cases to validate system robustness.",
+      "item": [
+        {
+          "name": "6a. Process Retries — No Failed Payments",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-request-id", "value": "test-edge-no-failures-{{$timestamp}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/scheduler/run/process-retries",
+              "host": ["{{baseUrl}}"],
+              "path": ["scheduler", "run", "process-retries"]
+            },
+            "description": "Run when no bookings have failed payments.\nExpected: 202 Accepted, logs show 'Found bookings with failed worker payments: count=0'.\nNo emails sent."
+          },
+          "response": []
+        },
+        {
+          "name": "6b. Process Retries — Idempotency (rapid re-run)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-request-id", "value": "test-edge-idempotent-{{$timestamp}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/scheduler/run/process-retries",
+              "host": ["{{baseUrl}}"],
+              "path": ["scheduler", "run", "process-retries"]
+            },
+            "description": "Run immediately after a previous run that sent payment links.\nExpected: all bookings skipped ('not enough time elapsed').\nNo duplicate PAYMENT_LINK emails."
+          },
+          "response": []
+        },
+        {
+          "name": "6c. Manual Link — No Guest Email",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bookingId\": \"{{bookingIdNoEmail}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/scheduler/run/send-payment-link",
+              "host": ["{{baseUrl}}"],
+              "path": ["scheduler", "run", "send-payment-link"]
+            },
+            "description": "Booking exists but has no guestEmail.\nExpected: { ok: false, result: { sent: false, reason: 'No guest email on booking' } }"
+          },
+          "response": []
+        },
+        {
+          "name": "6d. Monitor Flexible — No Eligible Bookings",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/scheduler/run/monitor-flexible",
+              "host": ["{{baseUrl}}"],
+              "path": ["scheduler", "run", "monitor-flexible"]
+            },
+            "description": "When no flexible bookings are past deadline.\nExpected: 202 Accepted, logs show count=0, no side effects."
+          },
+          "response": []
+        },
+        {
+          "name": "6e. Occupancy Endpoint (context for admin emails)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/occupancy/daily?propertyId={{propertyId}}&date={{date}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["occupancy", "daily"],
+              "query": [
+                { "key": "propertyId", "value": "{{propertyId}}" },
+                { "key": "date", "value": "{{date}}" }
+              ]
+            },
+            "description": "Verify occupancy data used in admin cancellation request emails."
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000",
+      "description": "Base URL of the NestJS application"
+    },
+    {
+      "key": "bookingId",
+      "value": "",
+      "description": "Internal booking UUID — set after creating a test booking"
+    },
+    {
+      "key": "reservationId",
+      "value": "",
+      "description": "Cloudbeds reservation ID"
+    },
+    {
+      "key": "bookingIdNoEmail",
+      "value": "",
+      "description": "Booking UUID of a booking with no guestEmail (edge case testing)"
+    },
+    {
+      "key": "propertyId",
+      "value": "317803",
+      "description": "Cloudbeds property ID"
+    },
+    {
+      "key": "date",
+      "value": "2026-04-06",
+      "description": "Date for occupancy check (YYYY-MM-DD)"
+    }
+  ]
+}

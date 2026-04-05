@@ -98,13 +98,15 @@ This system implements an automated booking payment workflow integrating Cloudbe
 - `payment.service.ts` - Payment processing logic
 - `payment.module.ts` - Module definition
 
-**Retry Logic**:
+**Payment Flow (Worker-First, Then Payment-Link Fallback)**:
 
-- Attempt 1: Immediate enqueue
-- Retries: hourly scheduler evaluates failed payments
-- Risky bookings: retry after 2 hours
-- Non-risky bookings: retry after 24 hours
-- After configured failures: request admin cancellation (manual action)
+- Attempt 1: Worker tries to charge via browser automation through Card (enqueued as `ChargeTask`)
+- If worker **succeeds**: booking confirmed, balance zeroed
+- If worker **fails** (e.g. invalid card): scheduler sends a **payment link email** to the guest (NO second worker attempt)
+- If still unpaid: **resend payment link** on risk-based schedule:
+  - HIGH / CRITICAL risk: resend after **2 hours**
+  - LOW / MEDIUM risk: resend after **24 hours**
+- After configured failure threshold (`cancelRequestAfterFailures`, default 2): notify admin about problematic booking (manual cancellation)
 
 ### 3A. Payment Worker
 
@@ -204,23 +206,21 @@ This system implements an automated booking payment workflow integrating Cloudbe
    - Flexible → Check cancellation deadline
    - Same-Day → Immediate payment
 
-5. **Payment Processing**
-   - Authorize payment (creates `Payment` + enqueues `ChargeTask`)
-   - Worker captures funds and marks `Payment` as `CAPTURED` or `FAILED`
-   - Scheduler retries based on failed payments
+5. **Payment Processing (Worker-First, Payment-Link Fallback)**
+   - Authorize payment (creates `Payment` + enqueues `ChargeTask` for worker)
+   - Worker attempts charge via browser automation
+   - If worker **succeeds**: `Payment` → `CAPTURED`, booking confirmed
+   - If worker **fails**: scheduler sends **payment link** to guest (no second worker attempt)
 
-6. **Notifications**
-   - Payment confirmation email
-   - Or payment reminder email
-   - Manager alert if needed
+6. **Payment-Link Follow-Up**
+   - If guest hasn't paid: resend payment link on risk-based schedule (2h risky / 24h normal)
+   - After configured threshold: notify admin with reservation details for manual cancellation
 
-### First Failure Escalation (Option A)
-
-When a payment attempt fails and check-in is within 2 days:
-- Always generate a Cloudbeds payment link
-- Always email the link to the guest (if `guestEmail` exists)
-- Always notify support
-- Deduplicate using `Booking.escalatedAt`
+7. **Notifications**
+   - Payment link email (on worker failure)
+   - Payment reminder email (48-72h before check-in)
+   - Support notification (on escalation)
+   - Admin cancellation request (after threshold exceeded)
 
 ### Check-In Flow
 

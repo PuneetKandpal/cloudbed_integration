@@ -78,14 +78,14 @@ Where `effectiveDeadline = parsedCancellationDeadline ?? cancellationDeadline`.
 |-----------|------------|---------|
 | Policy = NON_REFUNDABLE (or equivalent) | Attempt payment as early as possible (scheduler job enforces this) | Payment attempt starts immediately without waiting for any deadline |
 
-### D) Payment retries
+### D) Worker failure → Payment-link fallback
 
 | Condition | What we do | Outcome |
 |-----------|------------|---------|
-| Payment failed and attempts remaining | Schedule/perform retry based on risk | Guest gets another attempt before escalation |
-| Risk = HIGH/CRITICAL | Retry sooner (2h window) | More aggressive retry cadence |
-| Risk = LOW/MEDIUM | Retry later (24h window) | Less aggressive to reduce noise |
-| Attempts exceeded | Escalate to manager | `Booking.requiresManagerApproval = true` and manager email is sent |
+| Worker charge fails (e.g. invalid card) | Generate Cloudbeds payment link and email it to the guest | Guest receives a self-service payment link; NO second worker attempt |
+| Payment link sent but guest hasn't paid, Risk = HIGH/CRITICAL | Resend payment link after **2 hours** | More aggressive follow-up cadence |
+| Payment link sent but guest hasn't paid, Risk = LOW/MEDIUM | Resend payment link after **24 hours** | Less aggressive to reduce noise |
+| Payment link resend threshold exceeded (`cancelRequestAfterFailures`, default 2) | Notify admin with reservation ID + booking details | `Booking.requiresManagerApproval = true`; admin email sent for manual cancellation |
 
 ### E) Reminders
 
@@ -99,16 +99,18 @@ Where `effectiveDeadline = parsedCancellationDeadline ?? cancellationDeadline`.
 |-----|----------|---------|
 | `monitorFlexibleBookings` | hourly | After free-cancel window passes, automatically kick off payment workflow; ensures risk assessment exists. |
 | `processNonRefundableBookings` | every 30m | Immediate payment attempts for NR bookings lacking payment records. |
-| `processPaymentRetries` | hourly | Re-attempt failed payments based on risk window (2h risky, 24h normal). |
+| `processPaymentRetries` | hourly | After worker failure: send/resend payment link to guest based on risk window (2h risky, 24h normal); escalate to admin after threshold. |
 | `sendPaymentReminders` | every 12h | Email guests 48h prior to check-in when balance outstanding. |
 
-### 4.2 Payment Workflow
+### 4.2 Payment Workflow (Worker-First, Then Payment-Link Fallback)
 
 1. Scheduler/booking calls `PaymentService.authorizePayment(bookingId, amount)`.
 2. Service logs, creates `Payment` record (status PENDING), enqueues a `ChargeTask` record for the payment worker.
 3. Worker processes `ChargeTask` asynchronously and marks `Payment` as `CAPTURED` or `FAILED`.
-4. Scheduler uses `PaymentStatus.FAILED` records for retry logic.
-5. After configured failed attempts, scheduler sets `requiresManagerApproval` and sends an admin cancellation request email (manual action).
+4. If worker **succeeds**: booking confirmed, balance zeroed — done.
+5. If worker **fails** (e.g. invalid card): `processPaymentRetries` scheduler job detects `PaymentStatus.FAILED` and sends a **payment link email** to the guest (NO second worker attempt).
+6. If still unpaid: scheduler **resends** the payment link on a risk-based schedule (2h for HIGH/CRITICAL, 24h for LOW/MEDIUM).
+7. After configured threshold (`cancelRequestAfterFailures`, default 2): scheduler sets `requiresManagerApproval` and sends an admin cancellation request email (manual action).
 
 ### 4.3 Email Notifications
 
@@ -117,11 +119,13 @@ Where `effectiveDeadline = parsedCancellationDeadline ?? cancellationDeadline`.
 - **Cancellation Warning**: warns guest payment failure may cause cancellation (used before deadline/cut-off).
 - **Manager Escalation**: details payment failure attempts, risk level, check-in, amount due.
 
-**First Failure Escalation (Option A)**:
+**Worker Failure → Payment-Link Escalation**:
 
-- Trigger: first `PaymentStatus.FAILED` (attempt 1) AND check-in is within 2 days.
+- Trigger: worker `ChargeTask` fails → `PaymentStatus.FAILED`.
 - Action: generate Cloudbeds payment link, email it to the guest (if `guestEmail` exists), and notify support.
-- Deduplication: `Booking.escalatedAt` prevents repeating the escalation on retries.
+- Resend: if guest hasn't paid, resend payment link on risk-based schedule (2h risky / 24h normal).
+- Admin escalation: after configured threshold, notify admin with reservation ID for manual cancellation.
+- Deduplication: `Booking.escalatedAt` prevents repeating the initial escalation; `Email` table (type `PAYMENT_LINK`, status `SENT`) tracks resend timing.
 
 All email attempts recorded in `Email` table with status transitions (PENDING → SENT or failure).
 
@@ -157,14 +161,18 @@ Derived flags: `requiresImmediatePayment`, `priorityForCancellation`. Each asses
 3. **Different timezone strings**: confirm `parseISO` handles Cloudbeds format; adjust tests if timezone data appears.
 4. **Reservation re-delivery**: existing booking detection works (logger indicates skip). Note: reservationId must match Cloudbeds ID exactly to avoid duplicates.
 
-### 6.2 Payment + Scheduler
+### 6.2 Payment + Scheduler (Worker-First, Payment-Link Fallback)
 1. **Flexible booking pre-deadline**: scheduler must ignore until `parsedCancellationDeadline ?? cancellationDeadline` passes.
 2. **Non-refundable booking**: payment attempted even without scheduler (manual trigger) and also validated by scheduled job.
-3. **Payment success**: booking marked `CONFIRMED`, `remainingBalance=0`; scheduler should no longer target it.
-4. **Failed payment**: ensure `Payment` record increments attempt count, `nextRetryAt` set, logs include error message.
-5. **Retry thresholds**: verify risk-based intervals (mock `riskAssessment.riskLevel` to HIGH/CRITICAL vs LOW).
-6. **Escalation**: after configured attempts, `requiresManagerApproval` flips true and manager email triggered exactly once.
-7. **Email transport failure**: ensure errors bubble with logging; `Email` record remains PENDING/FAILED for reprocessing.
+3. **Worker payment success**: booking marked `CONFIRMED`, `remainingBalance=0`; scheduler should no longer target it.
+4. **Worker payment failure → first payment link**: ensure `Payment` record has `FAILED` status; `processPaymentRetries` detects it and sends `PAYMENT_LINK` email to guest (no second worker attempt).
+5. **Payment link resend timing (low risk)**: after 24h since last `PAYMENT_LINK` email, scheduler resends the link.
+6. **Payment link resend timing (high risk)**: after 2h since last `PAYMENT_LINK` email, scheduler resends the link.
+7. **No guest email**: if `guestEmail` is null, payment link cannot be sent — support notification sent instead.
+8. **Admin escalation threshold**: after `cancelRequestAfterFailures` (default 2) payment-link sends, `requiresManagerApproval` flips true and admin cancellation request email triggered exactly once.
+9. **Manual payment-link send**: `POST /scheduler/run/send-payment-link` with `bookingId` or `reservationId` triggers payment link immediately.
+10. **Email transport failure**: ensure errors bubble with logging; `Email` record remains PENDING/FAILED for reprocessing.
+11. **Idempotency**: running `processPaymentRetries` multiple times within the resend window should NOT send duplicate links.
 
 ### 6.3 Risk Assessment
 1. **Same-day arrival**: ensures +50 score, immediate payment flag.
