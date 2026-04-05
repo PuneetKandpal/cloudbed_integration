@@ -1,15 +1,17 @@
 // Prisma Schema for Hostelworld Payment Automation System
 // This schema manages bookings, guests, payments, risk assessments, and audit logs
 
+
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
-
+        
 // Booking policy types
 enum BookingPolicyType {
   FLEXIBLE
@@ -43,6 +45,7 @@ enum ChargeTaskStatus {
   IN_PROGRESS
   COMPLETED
   FAILED
+  CANCELLED
 }
 
 // Risk level types

@@ -696,10 +696,19 @@ export class BookingService {
 
       // Map Cloudbed status to our enum
       const bookingStatus = this.mapStatus(status);
+      
+      // Prepare update data
+      const updateData: any = { status: bookingStatus };
+      
+      // Set cancellation metadata if being cancelled
+      if (bookingStatus === BookingStatus.CANCELLED && booking.status !== BookingStatus.CANCELLED) {
+        updateData.cancelledAt = new Date();
+        updateData.cancellationReason = `Cancelled via Cloudbeds webhook (status: ${status})`;
+      }
 
       await this.prisma.booking.update({
         where: { id: booking.id },
-        data: { status: bookingStatus },
+        data: updateData,
       });
 
       // Create audit log
@@ -707,8 +716,31 @@ export class BookingService {
         booking.id,
         `Booking status changed to ${status}`,
         requestId,
-        { status, bookingStatus },
+        { status, bookingStatus, cancelledAt: updateData.cancelledAt },
       );
+
+      // If booking was cancelled, cancel any pending charge tasks to prevent worker processing
+      if (bookingStatus === BookingStatus.CANCELLED) {
+        await this.prisma.chargeTask.updateMany({
+          where: {
+            bookingId: booking.id,
+            status: 'PENDING',
+          },
+          data: {
+            status: 'CANCELLED',
+            errorMessage: 'Booking was cancelled',
+            completedAt: new Date(),
+          },
+        });
+        
+        this.logger.logInfo(
+          'Cancelled pending charge tasks for cancelled booking',
+          'BookingService',
+          'updateBookingStatus',
+          requestId,
+          { bookingId: booking.id, reservationId },
+        );
+      }
 
       // If checking in, charge remaining balance
       const remainingBalance = booking.remainingBalance.toNumber();

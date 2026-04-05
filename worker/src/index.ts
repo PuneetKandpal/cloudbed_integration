@@ -38,7 +38,7 @@ import path from 'node:path';
 import express, { type Request, type Response } from 'express';
 import cron from 'node-cron';
 import dotenv from 'dotenv';
-import { ChargeTaskStatus, PaymentStatus, PrismaClient } from '@prisma/client';
+import { PrismaClient, ChargeTaskStatus, BookingStatus, PaymentStatus } from '@prisma/client';
 import { runCloudbedsChargeAutomation } from './automation/cloudbeds-charge';
 
 // Load environment variables
@@ -387,6 +387,9 @@ async function processPendingTasks(): Promise<void> {
       where: {
         status: ChargeTaskStatus.PENDING,
         scheduledFor: { lte: now }, // Only tasks scheduled for now or earlier
+        booking: {
+          status: { in: [BookingStatus.CREATED, BookingStatus.CONFIRMED] }, // Only process non-cancelled/deleted bookings
+        },
       },
       orderBy: { scheduledFor: 'asc' }, // Process oldest first
       take: Math.max(1, batchSize),

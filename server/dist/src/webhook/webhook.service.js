@@ -66,6 +66,9 @@ let WebhookService = class WebhookService {
             case 'guest/updated':
                 await this.handleGuestUpdated(payload, requestId);
                 break;
+            case 'reservation/canceled':
+                await this.handleReservationCanceled(payload, requestId);
+                break;
             case 'reservation/deleted':
                 await this.handleReservationDeleted(payload, requestId);
                 break;
@@ -144,6 +147,17 @@ let WebhookService = class WebhookService {
     async handleGuestUpdated(payload, requestId) {
         this.logger.logInfo('Handling guest updated event', 'WebhookService', 'handleGuestUpdated', requestId, { guestId: payload.guestId });
     }
+    async handleReservationCanceled(payload, requestId) {
+        const reservationId = payload?.reservationId || payload?.reservationID;
+        this.logger.logInfo('Handling reservation canceled event', 'WebhookService', 'handleReservationCanceled', requestId, { reservationId, status: payload.status });
+        try {
+            await this.bookingService.updateBookingStatus(reservationId, 'canceled', requestId);
+            this.logger.logInfo('Successfully handled reservation canceled event', 'WebhookService', 'handleReservationCanceled', requestId, { reservationId });
+        }
+        catch (error) {
+            this.logger.logError('Failed to handle reservation canceled event', 'WebhookService', 'handleReservationCanceled', error, requestId, { reservationId });
+        }
+    }
     async handleReservationDeleted(payload, requestId) {
         const reservationId = payload?.reservationId || payload?.reservationID;
         this.logger.logInfo('Handling reservation deleted event', 'WebhookService', 'handleReservationDeleted', requestId, { reservationId });
@@ -158,6 +172,24 @@ let WebhookService = class WebhookService {
                     deletionReason: 'Deleted via Cloudbeds webhook',
                 },
             });
+            if (updatedBooking.count > 0) {
+                await this.prisma.chargeTask.updateMany({
+                    where: {
+                        bookingId: {
+                            in: (await this.prisma.booking.findMany({
+                                where: { reservationId: String(reservationId) },
+                                select: { id: true },
+                            })).map(b => b.id),
+                        },
+                        status: 'PENDING',
+                    },
+                    data: {
+                        status: 'CANCELLED',
+                        errorMessage: 'Booking was deleted',
+                        completedAt: new Date(),
+                    },
+                });
+            }
             if (updatedBooking.count > 0) {
                 this.logger.logInfo('Successfully marked booking as deleted', 'WebhookService', 'handleReservationDeleted', requestId, {
                     reservationId,

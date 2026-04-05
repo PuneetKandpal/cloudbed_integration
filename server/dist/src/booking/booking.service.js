@@ -402,11 +402,30 @@ let BookingService = class BookingService {
                 return;
             }
             const bookingStatus = this.mapStatus(status);
+            const updateData = { status: bookingStatus };
+            if (bookingStatus === client_1.BookingStatus.CANCELLED && booking.status !== client_1.BookingStatus.CANCELLED) {
+                updateData.cancelledAt = new Date();
+                updateData.cancellationReason = `Cancelled via Cloudbeds webhook (status: ${status})`;
+            }
             await this.prisma.booking.update({
                 where: { id: booking.id },
-                data: { status: bookingStatus },
+                data: updateData,
             });
-            await this.createAuditLog(booking.id, `Booking status changed to ${status}`, requestId, { status, bookingStatus });
+            await this.createAuditLog(booking.id, `Booking status changed to ${status}`, requestId, { status, bookingStatus, cancelledAt: updateData.cancelledAt });
+            if (bookingStatus === client_1.BookingStatus.CANCELLED) {
+                await this.prisma.chargeTask.updateMany({
+                    where: {
+                        bookingId: booking.id,
+                        status: 'PENDING',
+                    },
+                    data: {
+                        status: 'CANCELLED',
+                        errorMessage: 'Booking was cancelled',
+                        completedAt: new Date(),
+                    },
+                });
+                this.logger.logInfo('Cancelled pending charge tasks for cancelled booking', 'BookingService', 'updateBookingStatus', requestId, { bookingId: booking.id, reservationId });
+            }
             const remainingBalance = booking.remainingBalance.toNumber();
             if (status === 'checked_in' && remainingBalance > 0) {
                 this.logger.logInfo('Guest checking in with outstanding balance, processing payment', 'BookingService', 'updateBookingStatus', requestId, { bookingId: booking.id, remainingBalance });

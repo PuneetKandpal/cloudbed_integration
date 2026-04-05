@@ -93,6 +93,10 @@ export class WebhookService {
         await this.handleGuestUpdated(payload, requestId);
         break;
 
+      case 'reservation/canceled':
+        await this.handleReservationCanceled(payload, requestId);
+        break;
+
       case 'reservation/deleted':
         await this.handleReservationDeleted(payload, requestId);
         break;
@@ -325,6 +329,50 @@ export class WebhookService {
   }
 
   /**
+   * Handle reservation canceled event
+   */
+  private async handleReservationCanceled(
+    payload: any,
+    requestId: string,
+  ): Promise<void> {
+    const reservationId = payload?.reservationId || payload?.reservationID;
+    
+    this.logger.logInfo(
+      'Handling reservation canceled event',
+      'WebhookService',
+      'handleReservationCanceled',
+      requestId,
+      { reservationId, status: payload.status },
+    );
+
+    try {
+      // Use the same logic as status_changed to ensure consistency
+      await this.bookingService.updateBookingStatus(
+        reservationId,
+        'canceled',
+        requestId,
+      );
+
+      this.logger.logInfo(
+        'Successfully handled reservation canceled event',
+        'WebhookService',
+        'handleReservationCanceled',
+        requestId,
+        { reservationId },
+      );
+    } catch (error) {
+      this.logger.logError(
+        'Failed to handle reservation canceled event',
+        'WebhookService',
+        'handleReservationCanceled',
+        error,
+        requestId,
+        { reservationId },
+      );
+    }
+  }
+
+  /**
    * Handle reservation deleted event
    */
   private async handleReservationDeleted(
@@ -353,6 +401,26 @@ export class WebhookService {
           deletionReason: 'Deleted via Cloudbeds webhook',
         },
       });
+
+      // Also cancel any pending charge tasks to prevent worker processing
+      if (updatedBooking.count > 0) {
+        await this.prisma.chargeTask.updateMany({
+          where: {
+            bookingId: {
+              in: (await this.prisma.booking.findMany({
+                where: { reservationId: String(reservationId) },
+                select: { id: true },
+              })).map(b => b.id),
+            },
+            status: 'PENDING',
+          },
+          data: {
+            status: 'CANCELLED',
+            errorMessage: 'Booking was deleted',
+            completedAt: new Date(),
+          },
+        });
+      }
 
       if (updatedBooking.count > 0) {
         this.logger.logInfo(
